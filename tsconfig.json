@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": [
+    "config/**/*.ts",
+    "scripts/**/*.ts",
+    "packages/shared/**/*.ts",
+    "packages/pipeline/**/*.ts",
+    "packages/engine/**/*.ts",
+    "packages/server/**/*.ts",
+    "tests/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "data",
+    "tools",
+    "packages/client"
+  ]
+}

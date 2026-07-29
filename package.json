@@ -1,0 +1,32 @@
+{
+  "name": "wayfinder-gn",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "derive:bbox": "tsx scripts/derive-bbox.ts",
+    "setup:tools": "tsx scripts/setup-tools.ts",
+    "fetch:extracts": "tsx scripts/fetch-extracts.ts",
+    "build-city": "tsx packages/pipeline/build-city.ts",
+    "validate": "tsx scripts/validate-osrm.ts",
+    "bench": "tsx scripts/bench.ts",
+    "verify:browser": "tsx scripts/verify-browser.ts",
+    "acceptance": "tsx scripts/acceptance.ts",
+    "dev": "npm --prefix packages/client run dev",
+    "serve": "tsx packages/server/main.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "gate": "npm run typecheck && npm run test && npm run gate:copy",
+    "gate:copy": "tsx scripts/gate-copy.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+
+    "noEmit": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "baseUrl": ".",
+    "paths": {
+      "@config/*": ["config/*"],
+      "@wayfinder/shared": ["packages/shared/index.ts"],
+      "@wayfinder/shared/*": ["packages/shared/*"],
+      "@wayfinder/engine": ["packages/engine/index.ts"],
+      "@wayfinder/engine/*": ["packages/engine/*"],
+      "@wayfinder/pipeline/*": ["packages/pipeline/*"]
+    }
+  }
+}

@@ -1,0 +1,27 @@
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Vendored native binaries (tilemaker). Fetched by npm run setup:tools.
+tools/
+
+# Source extracts and every built artifact. Regenerate with npm run build-city.
+data/
+*.osm.pbf
+*.pmtiles
+*.mbtiles
+
+# Secrets and local overrides
+.env
+.env.*
+!.env.example
+
+# Dev server certs from vite-plugin-mkcert
+*.pem
+.vite/
+
+# OS noise
+Thumbs.db
+.DS_Store
