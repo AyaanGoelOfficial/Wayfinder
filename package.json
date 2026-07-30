@@ -10,6 +10,9 @@
     "derive:bbox": "tsx scripts/derive-bbox.ts",
     "setup:tools": "tsx scripts/setup-tools.ts",
     "fetch:extracts": "tsx scripts/fetch-extracts.ts",
+    "probe:extracts": "tsx scripts/probe-extract.ts",
+    "make:fixture": "tsx scripts/make-pbf-fixture.ts",
+    "diagnose:boundary": "tsx scripts/diagnose-boundary.ts",
     "build-city": "tsx packages/pipeline/build-city.ts",
     "validate": "tsx scripts/validate-osrm.ts",
     "bench": "tsx scripts/bench.ts",
@@ -20,13 +23,19 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "gate": "npm run typecheck && npm run test && npm run gate:copy",
-    "gate:copy": "tsx scripts/gate-copy.ts"
+    "gate": "npm run typecheck && npm run test && npm run gate:copy && npm run gate:mutation",
+    "gate:copy": "tsx scripts/gate-copy.ts",
+    "gate:mutation": "tsx scripts/gate-compound-assign.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "@fastify/static": "^10.1.2",
+    "fastify": "^5.10.0",
+    "pmtiles": "^4.4.1"
   }
 }

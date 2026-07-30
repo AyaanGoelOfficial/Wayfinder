@@ -1,11 +1,25 @@
 /**
  * Vendors the native tools the pipeline shells out to, into ./tools (git-ignored).
  *
- * WHY v3.0.0 AND NOT LATEST: tilemaker v3.1.0 publishes NO release assets at all
- * (verified 2026-07-29 against the GitHub releases API). v3.0.0 is the newest tag that
- * ships prebuilt binaries for macOS, Ubuntu and Windows. Building tilemaker from source
- * needs Boost, Lua, protobuf and shapelib, which is exactly the toolchain burden this
- * project exists to avoid. Do not "upgrade" this to latest without checking assets first.
+ * WHY v2.4.0 AND NOT LATEST, in order of elimination, all verified rather than assumed:
+ *  - v3.1.0 (2026-03-18) publishes ZERO release assets. Nothing to download.
+ *  - v3.0.0 (2024-01-15) ships assets, and its Windows binary CRASHES on this machine with
+ *    0xC0000409 (STATUS_STACK_BUFFER_OVERRUN) before reading a single byte of input. Reproduced
+ *    on a pristine Geofabrik extract, on our own clip, with tilemaker's OWN bundled config and
+ *    Lua, from a path containing no spaces, and under every combination of --threads 1, --store,
+ *    --shard-stores, --materialize-geometries, --fast and --no-compress-nodes. It always dies
+ *    immediately after printing the bounding box, never reaching "Reading .pbf". The vendored
+ *    tree was confirmed complete against the release zip: 12 files, no DLLs, statically linked.
+ *  - v2.4.0 (2023-03-31) runs correctly and produced a full tileset from our clip.
+ *
+ * COST OF THE DOWNGRADE: v2 predates PMTiles output, so it writes a directory of tiles and
+ * packages/pipeline/tiles/pmtiles.ts packs them into the archive. v2 also uses the method-style
+ * Lua API (`way:Find`) rather than v3's globals (`Find`), which process.lua is written against.
+ * Building v3 from source needs Boost, Lua, protobuf and shapelib, exactly the toolchain burden
+ * this project exists to avoid.
+ *
+ * Before ever bumping this: check the release actually has assets, then check the binary runs.
+ * An existing asset is not evidence that it works.
  */
 import { createWriteStream } from 'node:fs';
 import { mkdir, rm, readdir, stat, chmod } from 'node:fs/promises';
@@ -18,7 +32,7 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
-export const TILEMAKER_VERSION = 'v3.0.0';
+export const TILEMAKER_VERSION = 'v2.4.0';
 
 const ASSETS: Record<string, string> = {
   win32: 'tilemaker-windows.zip',
@@ -88,7 +102,9 @@ export async function setupTools(): Promise<string> {
   console.log(`fetching ${url}`);
   await download(url, zip);
   const size = (await stat(zip)).size;
-  console.log(`downloaded ${size.toLocaleString()} bytes`);
+  // Pinned to en-US. The machine locale groups Indian-style (2,33,60,135), which reads as a
+  // different order of magnitude at a glance and has already caused one misread build report.
+  console.log(`downloaded ${size.toLocaleString('en-US')} bytes`);
 
   await unzip(zip, TOOLS);
   await rm(zip, { force: true });

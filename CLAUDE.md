@@ -176,7 +176,12 @@ One line each; invariants live in the folder.
   storage, or splitting; never by quietly covering less city.
 - **Never widen a snap radius to make a test pass.** `SNAP_TRACKING_M` (40) and
   `SNAP_DESTINATION_M` (500) are different code paths, and crossing them is a bug.
-- **tilemaker is pinned to v3.0.0 deliberately.** v3.1.0 ships zero release assets.
+- **tilemaker is pinned to v2.4.0, and NOT to the newest release.** v3.1.0 ships zero release
+  assets. v3.0.0 ships assets whose Windows binary crashes here with `0xC0000409` before reading
+  any input, reproduced on a pristine extract with tilemaker's own config from a space-free path
+  under every flag combination. v2.4.0 runs, but predates PMTiles, so it writes a tile directory
+  and `packages/pipeline/tiles/pmtiles.ts` packs the archive. An existing release asset is not
+  evidence that the binary runs: check both.
 - **Duplicated state to change together:** a new `ErrorCode` touches `shared/index.ts`, the
   server handler that raises it, and the client state that renders its remedy.
 - `data/`, `tools/`, `dist/` and `node_modules/` are git-ignored and disposable.
@@ -204,13 +209,18 @@ A fresh clone runs: `npm install`, `npm run setup:tools`, `npm run fetch:extract
 
 ## Known weaknesses / not-yet-done
 
-- **Gate 1 has not been run.** No graph, no tiles, no places index exist yet. Every number
-  about scale, memory and timing is currently unmeasured.
-- **Graph scale is an open question.** The build area is 3,432 km2 and includes part of Delhi
-  NCR, so node count may reach ~10^6 rather than the ~10^5 originally assumed. The CH
-  decision rule is: p95 server route compute under 30 ms. If bidirectional Dijkstra clears
-  it, no CH. If not, exhaust tighter heuristic, memory layout and goal-directed pruning
-  first. Decide from measured numbers.
+- **The places index does not exist yet.** Gate 1 produced the graph and the tiles; search is
+  gate 7. Kasna stays a search fixture until then.
+- **Graph scale is MEASURED and small: 213,144 vertices, 532,951 directed edges** after
+  largest-SCC filtering, from 1,893,860 deduped in-area nodes. That is an order of magnitude
+  below the ~10^6 feared. CH still gets decided at gate 5 on measured p95 route compute under
+  30 ms, not on this count, but nothing about this scale suggests it will be needed.
+- **Speeds are ESTIMATES, not measurements.** Only 1,773 of 121,084 drivable ways carry a
+  parseable `maxspeed`; the other 98.5% use the class-default table. Gate 6 divergence from OSRM
+  will come mostly from here and from highway classification, not from turn restrictions.
+- **Turn restrictions are sparse: 55 in the build area**, of which 40 resolve to 40 banned turn
+  pairs. 12 are via-way, which is unsupported, and 3 have unusable roles. Budget gate 6
+  investigation accordingly.
 - **`osm-pbf-parser` is 3.5 years stale** and predates Node 24. Verified to exist, not
   verified to run. Fallback is hand-rolled protobuf decode over `pbf` plus zlib.
 - **Kasna is not a mapped place.** Verified against raw OSM: zero `place=*` under any

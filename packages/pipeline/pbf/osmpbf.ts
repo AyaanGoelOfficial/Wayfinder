@@ -309,14 +309,27 @@ export async function* readOsmPbf(path: string): AsyncGenerator<OsmElement> {
   }
 }
 
-/** Reads only the OSMHeader blob and returns its declared bbox and required features. */
-export async function readOsmPbfHeader(
-  path: string,
-): Promise<{ bbox?: { minLat: number; maxLat: number; minLon: number; maxLon: number }; features: string[] }> {
+/**
+ * Reads only the OSMHeader blob.
+ *
+ * REQUIRED and OPTIONAL features are reported separately, because the distinction decides
+ * whether a file is readable at all: a reader must REFUSE a file declaring a required feature it
+ * does not implement, while an unknown optional feature is ignorable. Only `OsmSchema-V0.6`,
+ * `DenseNodes` and `HistoricalInformation` are legitimately required; putting anything else in
+ * that field makes conforming readers reject the file. `features` remains the combined list.
+ */
+export async function readOsmPbfHeader(path: string): Promise<{
+  bbox?: { minLat: number; maxLat: number; minLon: number; maxLon: number };
+  features: string[];
+  requiredFeatures: string[];
+  optionalFeatures: string[];
+}> {
   for await (const blob of readBlobs(path)) {
     if (blob.type !== 'OSMHeader') continue;
     const r = new Reader(blob.data);
     const features: string[] = [];
+    const requiredFeatures: string[] = [];
+    const optionalFeatures: string[] = [];
     let bbox: { minLat: number; maxLat: number; minLon: number; maxLon: number } | undefined;
     while (r.hasMore) {
       const { field, wire } = r.readTag();
@@ -341,10 +354,14 @@ export async function readOsmPbfHeader(
           minLat: bottom * 1e-9,
         };
       } else if ((field === 4 || field === 5) && wire === WireType.Bytes) {
-        features.push(r.readString());
+        const name = r.readString();
+        features.push(name);
+        if (field === 4) requiredFeatures.push(name);
+        else optionalFeatures.push(name);
       } else r.skip(wire);
     }
-    return bbox ? { bbox, features } : { features };
+    const base = { features, requiredFeatures, optionalFeatures };
+    return bbox ? { bbox, ...base } : base;
   }
   throw new Error(`${path} contains no OSMHeader blob`);
 }

@@ -13,6 +13,17 @@ data/
 *.pmtiles
 *.mbtiles
 
+# ONE exception, deliberately narrow. A few real blobs sliced out of an extract, committed
+# so the decoder has at least one test against actual bytes rather than only against
+# synthetic fixtures that share its own assumptions. 1.23 MB as sliced: one OSMHeader plus
+# the first dense-node, first way and first relation block. Size is asserted by
+# tests/pipeline/real-bytes.test.ts so a careless regeneration cannot commit an extract.
+# Regenerate with npm run make:fixture.
+# This is NOT a licence to commit an extract or a built artifact: hard-rules.md still bans
+# those, and the reason it gives (hundreds of MB, reproducible from config) is exactly why
+# this narrow slice does not fall under it.
+!tests/pipeline/fixtures/real-slice.osm.pbf
+
 # Secrets and local overrides
 .env
 .env.*

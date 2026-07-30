@@ -3,10 +3,14 @@
 Everything here is invoked by an `npm run` script and is allowed to touch the network, the
 filesystem, and `tools/`. Nothing in `packages/` may import from here.
 
-- **NEVER pin tilemaker to `latest`.** v3.1.0 publishes zero release assets (verified
-  2026-07-29 against the GitHub releases API); v3.0.0 is the newest tag with prebuilt
-  binaries. Building from source needs Boost, Lua, protobuf and shapelib, which is the
-  toolchain burden this project exists to avoid. Check assets exist before bumping.
+- **NEVER pin tilemaker to `latest`, and NEVER treat "the release has assets" as "the binary
+  works".** v3.1.0 publishes zero assets. v3.0.0 publishes assets whose Windows binary crashes
+  with `0xC0000409` before reading any input, reproduced on a pristine Geofabrik extract with
+  tilemaker's own bundled config and Lua, from a path containing no spaces, under every
+  combination of `--threads 1`, `--store`, `--shard-stores`, `--materialize-geometries` and
+  `--fast`. v2.4.0 is pinned because it actually runs. Building from source needs Boost, Lua,
+  protobuf and shapelib, the toolchain burden this project exists to avoid. Before bumping:
+  check assets exist, then run the binary on real input.
 - **`tools/` and `data/` are git-ignored and disposable.** Any script here must be able to
   recreate its outputs from nothing. If a script needs a file it did not fetch, it must say
   which command produces it, not fail with ENOENT.

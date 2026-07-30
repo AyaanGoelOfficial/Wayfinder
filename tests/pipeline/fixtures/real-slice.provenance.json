@@ -1,0 +1,43 @@
+{
+  "note": "Verbatim blob slice of a real Geofabrik extract, kept as a test fixture. Regenerate with `npm run make:fixture`. Expected values for the test come from pyosmium reading THIS file, never from our own decoder.",
+  "sourceExtract": "northern-zone",
+  "sourceUrl": "https://download.geofabrik.de/asia/india/northern-zone-latest.osm.pbf",
+  "sourceMd5": "a8022e81a56829921d9a434f4a6461b7",
+  "sourceLastModified": "Tue, 28 Jul 2026 23:14:43 GMT",
+  "slicedOn": "2026-07-30",
+  "fixtureBytes": 1287695,
+  "fixtureMd5": "a50ec650e347322a9cdb5f7b86de8cef",
+  "blobsScannedToFindThem": 4547,
+  "blobs": [
+    {
+      "type": "OSMHeader",
+      "byteOffsetInSource": 0,
+      "framedBytes": 201,
+      "groupFields": []
+    },
+    {
+      "type": "OSMData",
+      "byteOffsetInSource": 201,
+      "framedBytes": 99381,
+      "groupFields": [
+        2
+      ]
+    },
+    {
+      "type": "OSMData",
+      "byteOffsetInSource": 157843078,
+      "framedBytes": 594557,
+      "groupFields": [
+        3
+      ]
+    },
+    {
+      "type": "OSMData",
+      "byteOffsetInSource": 221147680,
+      "framedBytes": 593556,
+      "groupFields": [
+        4
+      ]
+    }
+  ]
+}

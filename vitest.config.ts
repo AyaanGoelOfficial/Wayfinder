@@ -14,7 +14,17 @@ export default defineConfig({
   },
   test: {
     include: ['tests/**/*.test.ts', 'packages/**/*.test.ts'],
-    exclude: ['node_modules', 'data', 'tools', 'dist'],
+    // Globs, not bare directory names. `exclude` REPLACES vitest's defaults, and a bare
+    // 'node_modules' matches only the top-level one, so `packages/client/node_modules` leaked in
+    // and the run started executing maplibre-gl's own 1,000+ tests as if they were ours.
+    exclude: [
+      '**/node_modules/**',
+      '**/data/**',
+      '**/tools/**',
+      '**/dist/**',
+      '**/build/**',
+      '**/coverage/**',
+    ],
     // Golden-route and cross-algorithm suites run 1000 pairs. Default 5s is too tight.
     testTimeout: 60_000,
     reporters: ['default'],
