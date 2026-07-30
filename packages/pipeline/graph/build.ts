@@ -11,7 +11,7 @@
  * SCC is iterative Tarjan, not recursive. At this scale a recursive implementation overflows
  * the stack, and it does so on the largest component, which is exactly the input that matters.
  */
-import { haversineM } from './geo.ts';
+import { haversineM } from '../../shared/geo.ts';
 import { classifyWay } from './profile.ts';
 import type { Clipped } from '../clip/clip.ts';
 
@@ -70,6 +70,16 @@ export interface Graph {
   readonly shapeOffset: Int32Array;
   readonly shapeLat: Int32Array;
   readonly shapeLon: Int32Array;
+
+  /**
+   * Way ids that passed the profile filter, BEFORE SCC pruning. Kept so an unresolved turn
+   * restriction can be told apart: a member way absent here was never drivable, while one
+   * present here but with no surviving edges was dropped by SCC filtering. Those are different
+   * findings and only one of them is benign.
+   */
+  readonly drivableWayIds: ReadonlySet<number>;
+  /** Node ids that became vertices before SCC pruning, for the same diagnostic reason. */
+  readonly vertexNodeIdsBeforeScc: ReadonlySet<number>;
 
   readonly stats: GraphStats;
 }
@@ -332,6 +342,13 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
   const finalCsr = buildCsr(keptV, fFrom);
   sampleRss();
 
+  const drivableWayIds = new Set<number>();
+  for (const k of kept) drivableWayIds.add((clipped.ways[k.wayIndex] as (typeof clipped.ways)[number]).id);
+  const vertexNodeIdsBeforeScc = new Set<number>();
+  for (let i = 0; i < nodeCount; i++) {
+    if (isVertex[i] === 1) vertexNodeIdsBeforeScc.add(nodeIds[i] as number);
+  }
+
   const buildSeconds = (performance.now() - t0) / 1000;
   const stats: GraphStats = {
     clippedNodes: nodeCount,
@@ -375,6 +392,8 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
     shapeOffset: new Int32Array(shapeOffset),
     shapeLat: new Int32Array(shapeLat),
     shapeLon: new Int32Array(shapeLon),
+    drivableWayIds,
+    vertexNodeIdsBeforeScc,
     stats,
   };
 }

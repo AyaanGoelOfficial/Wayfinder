@@ -1,12 +1,12 @@
 /**
  * Great-circle distance, in metres.
  *
- * NOTE ON WHERE THIS LIVES: the engine will need the identical function, and the route line
- * and the drawn road can only agree if there is exactly ONE implementation of it. When the
- * engine reaches this point, this file moves to `packages/shared/` and both import it from
- * there. It sits in the pipeline for now because `packages/CLAUDE.md` forbids the pipeline
- * importing the engine, and adding a util to `shared/index.ts` (THE CONTRACT, which holds
- * types crossing server and client) would put a non-contract thing in a contract file.
+ * WHY IT LIVES IN shared/: the pipeline measures edge lengths with it and the engine measures
+ * route costs and snap distances with it. The route line and the drawn road can only be
+ * guaranteed to agree if there is exactly ONE implementation, and `packages/CLAUDE.md` forbids
+ * the pipeline importing the engine, so shared/ is the only place both can reach. It is a
+ * separate file from index.ts on purpose: index.ts is THE CONTRACT and holds types crossing
+ * server and client, not utilities.
  *
  * Haversine rather than equirectangular: at this latitude the cheap approximation is off by
  * a few metres per kilometre, which accumulates over a long route into an ETA that disagrees

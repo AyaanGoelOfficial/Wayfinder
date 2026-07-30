@@ -16,6 +16,7 @@ import type { ClipExtractInput } from './clip/clip.ts';
 import { buildGraph } from './graph/build.ts';
 import { buildTurnTable } from './graph/restrictions.ts';
 import { writeClipAsPbf } from './clip/pbfwrite.ts';
+import { buildPlaces } from './places/build.ts';
 import { buildTiles } from './tiles/build-tiles.ts';
 import { readLock } from '../../scripts/fetch-extracts.ts';
 
@@ -183,20 +184,48 @@ const vertexOfNodeId = new Map<number, number>();
 for (let v = 0; v < graph.vertexNodeId.length; v++) {
   vertexOfNodeId.set(graph.vertexNodeId[v] as number, v);
 }
-const turns = buildTurnTable(graph, clipped.relations, vertexOfNodeId);
+const turns = buildTurnTable(graph, clipped.relations, vertexOfNodeId, clipped);
 const rs = turns.stats;
 console.log(`  restriction relations   ${n(rs.relationsSeen)}   <- in the clipped area`);
 console.log(`  resolved                ${n(rs.resolved)}`);
 console.log(`  banned turn pairs       ${n(rs.bannedTurnPairs)}`);
 console.log(`  approaches with a ban   ${n(turns.banned.size)}`);
-console.log(`  unresolved, via way     ${n(rs.unresolved.viaWayUnsupported)}   <- NOT supported yet`);
-console.log(`  unresolved, conditional ${n(rs.unresolved.conditionalIgnored)}   <- NOT honoured`);
-console.log(`  unresolved, via not vtx ${n(rs.unresolved.viaNodeNotAVertex)}`);
-console.log(`  unresolved, from way    ${n(rs.unresolved.fromWayNotInGraph)}`);
-console.log(`  unresolved, to way      ${n(rs.unresolved.toWayNotInGraph)}`);
-console.log(`  unresolved, bad role    ${n(rs.unresolved.missingRole)}`);
-console.log(`  unresolved, bad value   ${n(rs.unresolved.unknownRestrictionValue)}`);
+console.log(`  correctly ignored       ${n(rs.correctlyIgnored)}   <- cannot permit an illegal turn`);
+console.log(`  NOT HONOURED            ${n(rs.notHonoured)}   <- real prohibitions we failed to apply (charter item 7)`);
 console.log(`  "except" tags seen      ${n(rs.exceptTagsSeen)}   <- not yet applied per vehicle class`);
+
+if (rs.unresolved.length > 0) {
+  console.log('\n  every unresolved restriction, by reason:');
+  for (const [reason, count] of Object.entries(rs.byReason).sort((a, b) => b[1] - a[1])) {
+    console.log(`    ${reason.padEnd(34)} ${String(count).padStart(3)}`);
+  }
+  console.log('\n  relation by relation:');
+  for (const u of rs.unresolved) {
+    const flag = u.verdict === 'not-honoured' ? 'NOT HONOURED  ' : 'ignored       ';
+    console.log(`    ${flag} r${u.relationId} ${u.kind}`);
+    console.log(`                   ${u.detail}`);
+  }
+}
+
+// ---- Stage 3b: places index, the third derivative ----
+console.log('\n--- stage 3b: places index ---');
+const places = buildPlaces(clipped);
+const pl = places.stats;
+console.log(`  places total            ${n(pl.total)}`);
+console.log(`  from nodes / ways / rel ${n(pl.fromNodes)} / ${n(pl.fromWays)} / ${n(pl.fromRelations)}`);
+console.log(`  settlements             ${n(pl.settlements)}`);
+console.log(`  POIs                    ${n(pl.pois)}`);
+console.log(`  named roads             ${n(pl.namedRoads)}   <- ${n(pl.roadWaysCollapsed)} extra OSM ways collapsed into them`);
+console.log(`  names with Devanagari   ${n(pl.withDevanagariName)}`);
+console.log(`  distinct normalised     ${n(pl.distinctNormalisedNames)}`);
+console.log(`  build time              ${pl.buildSeconds} s`);
+await writeFile(
+  resolve(DATA, 'places.json'),
+  JSON.stringify({ builtAt: new Date().toISOString(), stats: pl, places: places.places }),
+  'utf8',
+);
+const placesBytes = (await stat(resolve(DATA, 'places.json'))).size;
+console.log(`  wrote data/places.json  ${mb(placesBytes)}`);
 
 // ---- Stage 4: write the clipped subset back out as a PBF, for tilemaker ----
 console.log('\n--- stage 4: clipped subset to .osm.pbf (one source, three derivatives) ---');
@@ -277,6 +306,7 @@ const report = {
   clipFromCache: fromCache,
   graph: gs,
   restrictions: rs,
+  places: pl,
   clippedPbf: ps,
   tiles,
 };

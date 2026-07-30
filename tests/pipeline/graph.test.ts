@@ -343,7 +343,7 @@ describe('graph: turn restrictions', () => {
     const g = buildGraph(toy(nodes, ways, [rel]));
     const vertexOfNodeId = new Map<number, number>();
     for (let v = 0; v < g.vertexNodeId.length; v++) vertexOfNodeId.set(g.vertexNodeId[v] as number, v);
-    const t = buildTurnTable(g, [rel], vertexOfNodeId);
+    const t = buildTurnTable(g, [rel], vertexOfNodeId, toy(nodes, ways, [rel]));
 
     expect(t.stats.relationsSeen).toBe(1);
     expect(t.stats.resolved).toBe(1);
@@ -366,7 +366,7 @@ describe('graph: turn restrictions', () => {
     const g = buildGraph(toy(nodes, ways, [rel]));
     const vertexOfNodeId = new Map<number, number>();
     for (let v = 0; v < g.vertexNodeId.length; v++) vertexOfNodeId.set(g.vertexNodeId[v] as number, v);
-    const t = buildTurnTable(g, [rel], vertexOfNodeId);
+    const t = buildTurnTable(g, [rel], vertexOfNodeId, toy(nodes, ways, [rel]));
 
     expect(t.stats.resolved).toBe(1);
     // Way 101 leaving the junction is the only alternative, so exactly one ban. The U-turn back
@@ -390,9 +390,11 @@ describe('graph: turn restrictions', () => {
     const g = buildGraph(toy(nodes, ways, [rel]));
     const vertexOfNodeId = new Map<number, number>();
     for (let v = 0; v < g.vertexNodeId.length; v++) vertexOfNodeId.set(g.vertexNodeId[v] as number, v);
-    const t = buildTurnTable(g, [rel], vertexOfNodeId);
+    const t = buildTurnTable(g, [rel], vertexOfNodeId, toy(nodes, ways, [rel]));
     // A restriction silently discarded is an illegal turn the router takes happily.
-    expect(t.stats.unresolved.viaWayUnsupported).toBe(1);
+    expect(t.stats.byReason['via-way-unsupported']).toBe(1);
+    // A real prohibition on drivable roads that we cannot express is NOT benign.
+    expect(t.stats.notHonoured).toBe(1);
     expect(t.stats.bannedTurnPairs).toBe(0);
   });
 
@@ -413,8 +415,10 @@ describe('graph: turn restrictions', () => {
     const g = buildGraph(toy(nodes, ways, [rel]));
     const vertexOfNodeId = new Map<number, number>();
     for (let v = 0; v < g.vertexNodeId.length; v++) vertexOfNodeId.set(g.vertexNodeId[v] as number, v);
-    const t = buildTurnTable(g, [rel], vertexOfNodeId);
-    expect(t.stats.unresolved.conditionalIgnored).toBe(1);
+    const t = buildTurnTable(g, [rel], vertexOfNodeId, toy(nodes, ways, [rel]));
+    expect(t.stats.byReason['conditional']).toBe(1);
+    // Deliberate non-application, so it cannot permit an illegal turn at all times.
+    expect(t.stats.correctlyIgnored).toBe(1);
     expect(t.stats.bannedTurnPairs).toBe(0);
   });
 });
