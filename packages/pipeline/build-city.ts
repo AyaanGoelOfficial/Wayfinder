@@ -189,10 +189,17 @@ const turns = buildTurnTable(graph, clipped.relations, vertexOfNodeId, clipped);
 const rs = turns.stats;
 console.log(`  restriction relations   ${n(rs.relationsSeen)}   <- in the clipped area`);
 console.log(`  resolved                ${n(rs.resolved)}`);
-console.log(`  banned turn pairs       ${n(rs.bannedTurnPairs)}`);
-console.log(`  approaches with a ban   ${n(turns.banned.size)}`);
+console.log(`  ENFORCED by pair        ${n(rs.enforcedByPair)}   via-node, ${n(rs.bannedTurnPairs)} banned (from,to) pairs`);
+console.log(`  ENFORCED by sequence    ${n(rs.enforcedBySequence)}   via-way, ${n(rs.bannedSequenceTriples)} banned (from,via,to) triples`);
+console.log(`  edges carrying a ban    ${n(turns.banned.size + turns.bannedSequences.size)} of ${n(graph.edgeFrom.length)}`);
 console.log(`  correctly ignored       ${n(rs.correctlyIgnored)}   <- cannot permit an illegal turn`);
 console.log(`  NOT HONOURED            ${n(rs.notHonoured)}   <- real prohibitions we failed to apply (charter item 7)`);
+if (rs.notHonoured > 0) {
+  console.error(
+    `\nFAIL: ${rs.notHonoured} real turn restriction(s) on drivable roads are not enforced. ` +
+      `Charter item 7 is absolute: the router can return an illegal turn. Each is listed below.`,
+  );
+}
 console.log(`  "except" tags seen      ${n(rs.exceptTagsSeen)}   <- not yet applied per vehicle class`);
 
 if (rs.unresolved.length > 0) {
@@ -207,6 +214,9 @@ if (rs.unresolved.length > 0) {
     console.log(`                   ${u.detail}`);
   }
 }
+// The gate: a real prohibition we cannot apply is an illegal route waiting to happen, so the
+// build refuses rather than shipping artifacts the router will misuse.
+if (rs.notHonoured > 0) process.exit(1);
 
 // ---- Stage 3b: places index, the third derivative ----
 console.log('\n--- stage 3b: places index ---');

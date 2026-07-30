@@ -34,7 +34,7 @@ export type FailureReason =
   | 'conditional'
   | 'unknown-restriction-value'
   | 'malformed-roles'
-  | 'via-way-unsupported'
+  | 'via-way-chain-unsupported'
   | 'via-node-outside-clip'
   | 'via-node-not-an-intersection'
   | 'via-node-dropped-by-scc'
@@ -56,6 +56,11 @@ export interface RestrictionStats {
   readonly relationsSeen: number;
   readonly resolved: number;
   readonly bannedTurnPairs: number;
+  /** Restrictions enforced as a (from, to) pair at a via node. */
+  readonly enforcedByPair: number;
+  /** Restrictions enforced as an ordered (from, via, to) triple across a via way. */
+  readonly enforcedBySequence: number;
+  readonly bannedSequenceTriples: number;
   readonly correctlyIgnored: number;
   /** Real restrictions on drivable roads that we failed to apply. Charter item 7. */
   readonly notHonoured: number;
@@ -64,9 +69,34 @@ export interface RestrictionStats {
   readonly exceptTagsSeen: number;
 }
 
+/** One banned ordered triple, keyed elsewhere by its middle (via) edge. */
+export interface BannedSequence {
+  readonly fromEdge: number;
+  readonly toEdge: number;
+}
+
 export interface TurnTable {
-  /** Banned (fromEdge, toEdge) pairs, keyed by the incoming edge the search arrives on. */
+  /**
+   * Banned (fromEdge, toEdge) pairs for via-NODE restrictions, keyed by the incoming edge.
+   * The search has that edge in hand when it reaches the vertex, so this is a single lookup.
+   */
   readonly banned: ReadonlyMap<number, ReadonlySet<number>>;
+  /**
+   * Banned ordered triples for via-WAY restrictions, keyed by the MIDDLE edge.
+   *
+   * Keyed by the via edge rather than the from edge because that is the edge the search is
+   * standing on when it must decide: relaxing out of edge `v`, it knows `v` and the candidate
+   * `to`, and it can read its own predecessor to recover `from`. Keying by `from` would force a
+   * lookahead the search does not have.
+   */
+  readonly bannedSequences: ReadonlyMap<number, readonly BannedSequence[]>;
+  /**
+   * 1 where an edge is a key in EITHER table. This is the hot-path guard: the search reads one
+   * byte per expansion and only touches a Map when it is set. With 52 restricted edges out of
+   * 532,951, the branch is predicted false essentially always, so restriction support costs one
+   * array read per expansion rather than a Map lookup.
+   */
+  readonly edgeRestricted: Uint8Array;
   readonly stats: RestrictionStats;
 }
 
@@ -98,9 +128,24 @@ export function buildTurnTable(
     return true;
   };
 
+  const bannedSequences = new Map<number, BannedSequence[]>();
+  const banSeq = (fromEdge: number, viaEdge: number, toEdge: number): boolean => {
+    const list = bannedSequences.get(viaEdge);
+    if (list === undefined) {
+      bannedSequences.set(viaEdge, [{ fromEdge, toEdge }]);
+      return true;
+    }
+    if (list.some((s) => s.fromEdge === fromEdge && s.toEdge === toEdge)) return false;
+    list.push({ fromEdge, toEdge });
+    return true;
+  };
+
   let relationsSeen = 0;
   let resolved = 0;
   let bannedTurnPairs = 0;
+  let enforcedByPair = 0;
+  let enforcedBySequence = 0;
+  let bannedSequenceTriples = 0;
   let exceptTagsSeen = 0;
   const unresolved: UnresolvedRestriction[] = [];
 
@@ -180,21 +225,89 @@ export function buildTurnTable(
     let fromWay: number | undefined;
     let toWay: number | undefined;
     let viaNode: number | undefined;
-    let viaWayCount = 0;
+    const viaWayRefs: number[] = [];
     for (const m of rel.members) {
       if (m.role === 'from' && m.type === 'way') fromWay = m.ref;
       else if (m.role === 'to' && m.type === 'way') toWay = m.ref;
       else if (m.role === 'via') {
         if (m.type === 'node') viaNode = m.ref;
-        else if (m.type === 'way') viaWayCount++;
+        else if (m.type === 'way') viaWayRefs.push(m.ref);
       }
     }
 
-    if (viaWayCount > 0 && viaNode === undefined) {
-      // A real prohibition on real roads that this implementation cannot express. Not benign.
-      fail(rel.id, kind, 'via-way-unsupported', 'not-honoured', `via is ${viaWayCount} way(s); only via-node restrictions are supported`);
+    // ---- VIA-WAY: enforced as an ordered triple, not a pair ----
+    if (viaWayRefs.length > 0 && viaNode === undefined) {
+      if (fromWay === undefined || toWay === undefined) {
+        fail(rel.id, kind, 'malformed-roles', 'correctly-ignored', 'via-way restriction missing a from or to way');
+        continue;
+      }
+      // A chain of SEVERAL via ways needs a sequence longer than three edges, which the search
+      // cannot check with one predecessor. None exist in this build area; counted rather than
+      // quietly treated as a single-via case, which would ban the wrong turn.
+      if (viaWayRefs.length > 1) {
+        fail(rel.id, kind, 'via-way-chain-unsupported', 'not-honoured', `via is a chain of ${viaWayRefs.length} ways; only a single via way is supported`);
+        continue;
+      }
+      const viaWay = viaWayRefs[0] as number;
+      const viaCandidates = edgesOfWay.get(viaWay);
+      if (viaCandidates === undefined) {
+        const c = classifyWay(viaWay, 'via');
+        fail(rel.id, kind, c.reason, c.verdict, c.detail);
+        continue;
+      }
+      const fromCand = edgesOfWay.get(fromWay);
+      if (fromCand === undefined) {
+        const c = classifyWay(fromWay, 'from');
+        fail(rel.id, kind, c.reason, c.verdict, c.detail);
+        continue;
+      }
+      const toCand = edgesOfWay.get(toWay);
+      if (toCand === undefined) {
+        const c = classifyWay(toWay, 'to');
+        fail(rel.id, kind, c.reason, c.verdict, c.detail);
+        continue;
+      }
+
+      // A via way is bidirectional in the graph, so it yields two directed edges. Only the one
+      // whose direction actually links a from-arrival to a to-departure is the manoeuvre being
+      // banned; banning both would forbid the legal traversal in the opposite direction.
+      let added = 0;
+      for (const ve of viaCandidates) {
+        const v1 = graph.edgeFrom[ve] as number;
+        const v2 = graph.edgeTo[ve] as number;
+        const arriving = fromCand.filter((e) => (graph.edgeTo[e] as number) === v1);
+        if (arriving.length === 0) continue;
+        if (isNo) {
+          const leaving = toCand.filter((e) => (graph.edgeFrom[e] as number) === v2);
+          for (const a of arriving) {
+            for (const l of leaving) if (banSeq(a, ve, l)) added++;
+          }
+        } else {
+          // only_*: from this approach, across this via way, everything leaving the far end is
+          // banned except the permitted way.
+          const allowed = new Set(toCand.filter((e) => (graph.edgeFrom[e] as number) === v2));
+          const start = graph.csrOffset[v2] as number;
+          const end = graph.csrOffset[v2 + 1] as number;
+          for (const a of arriving) {
+            for (let i = start; i < end; i++) {
+              const t = graph.csrEdge[i] as number;
+              if (allowed.has(t)) continue;
+              if ((graph.edgeWayId[t] as number) === viaWay) continue; // reversing along the via way
+              if (banSeq(a, ve, t)) added++;
+            }
+          }
+        }
+      }
+      if (added === 0) {
+        fail(rel.id, kind, 'member-way-wrong-direction-at-via', 'not-honoured', `no directed traversal of via way ${viaWay} links from ${fromWay} to ${toWay}`);
+        continue;
+      }
+      resolved++;
+      enforcedBySequence++;
+      bannedSequenceTriples += added;
       continue;
     }
+
     if (fromWay === undefined || toWay === undefined || viaNode === undefined) {
       const missing = [
         fromWay === undefined ? 'from' : null,
@@ -265,18 +378,30 @@ export function buildTurnTable(
       }
     }
     resolved++;
+    enforcedByPair++;
     bannedTurnPairs += added;
   }
+
+  // Hot-path guard, built once. An edge is flagged if it is a key in either table, so the search
+  // does one array read per expansion and only touches a Map when it hits.
+  const edgeRestricted = new Uint8Array(graph.edgeWayId.length);
+  for (const e of banned.keys()) edgeRestricted[e] = 1;
+  for (const e of bannedSequences.keys()) edgeRestricted[e] = 1;
 
   const byReason: Record<string, number> = {};
   for (const u of unresolved) byReason[u.reason] = (byReason[u.reason] ?? 0) + 1;
 
   return {
     banned,
+    bannedSequences,
+    edgeRestricted,
     stats: {
       relationsSeen,
       resolved,
       bannedTurnPairs,
+      enforcedByPair,
+      enforcedBySequence,
+      bannedSequenceTriples,
       correctlyIgnored: unresolved.filter((u) => u.verdict === 'correctly-ignored').length,
       notHonoured: unresolved.filter((u) => u.verdict === 'not-honoured').length,
       byReason,

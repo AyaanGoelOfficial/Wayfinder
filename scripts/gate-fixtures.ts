@@ -21,8 +21,10 @@ import { ROUTING_FIXTURES } from '../config/fixtures/routing.ts';
 import { SEARCH_FIXTURES, SEARCH_BUDGET_MS } from '../config/fixtures/search.ts';
 import { loadOrBuildClip } from '../packages/pipeline/clip/clip.ts';
 import { buildGraph } from '../packages/pipeline/graph/build.ts';
+import { buildTurnTable } from '../packages/pipeline/graph/restrictions.ts';
 import { buildPlaces } from '../packages/pipeline/places/build.ts';
 import { SnapIndex } from '../packages/engine/snap.ts';
+import { Router } from '../packages/engine/dijkstra.ts';
 import { PlacesSearch } from '../packages/engine/search.ts';
 import { haversineM } from '../packages/shared/geo.ts';
 import { readLock } from './fetch-extracts.ts';
@@ -42,6 +44,8 @@ const { clipped } = await loadOrBuildClip(
   () => {},
 );
 const graph = buildGraph(clipped);
+const vertexOfNodeId = new Map<number, number>();
+for (let v = 0; v < graph.vertexNodeId.length; v++) vertexOfNodeId.set(graph.vertexNodeId[v] as number, v);
 const places = buildPlaces(clipped);
 const snapIndex = new SnapIndex(graph, BUILD_AREA);
 const search = new PlacesSearch(places.places);
@@ -177,13 +181,84 @@ console.log('\n--- gated campus snaps to a LEGAL edge, not through the private r
 }
 
 // ---------------------------------------------------------------------------
+// Turn restrictions, enforced against the REAL graph, not a toy.
+// ---------------------------------------------------------------------------
+console.log('\n--- every banned sequence is enforced on the real graph ---');
+{
+  const turns = buildTurnTable(graph, clipped.relations, vertexOfNodeId, clipped);
+  check(
+    turns.stats.notHonoured === 0,
+    'no real restriction is left unenforced (charter item 7)',
+    `${turns.stats.enforcedByPair} by pair, ${turns.stats.enforcedBySequence} by sequence, ` +
+      `${turns.stats.correctlyIgnored} correctly ignored, ${turns.stats.notHonoured} not honoured`,
+  );
+
+  const restricted = new Router(graph, turns);
+  // The control: an identical router with NO restrictions. If the illegal manoeuvre is not the
+  // preferred path for this pair, the restricted result proves nothing.
+  const free = new Router(graph, {
+    banned: new Map(),
+    bannedSequences: new Map(),
+    edgeRestricted: new Uint8Array(graph.edgeFrom.length),
+  });
+
+  let controlTookTurn = 0;
+  let enforced = 0;
+  let stillRoutable = 0;
+  const total = [...turns.bannedSequences.values()].reduce((a, l) => a + l.length, 0);
+
+  for (const [viaEdge, seqs] of turns.bannedSequences) {
+    for (const s of seqs) {
+      const a = free.route(s.fromEdge, 0, s.toEdge, 1);
+      const b = restricted.route(s.fromEdge, 0, s.toEdge, 1);
+
+      const usesTriple = (edges: readonly number[] | undefined): boolean => {
+        if (edges === undefined) return false;
+        const i = edges.indexOf(viaEdge);
+        return i > 0 && edges[i - 1] === s.fromEdge && edges[i + 1] === s.toEdge;
+      };
+      if (usesTriple(a?.edges)) controlTookTurn++;
+      if (b !== null) stillRoutable++;
+      if (!usesTriple(b?.edges)) enforced++;
+    }
+  }
+
+  check(
+    controlTookTurn === total,
+    'CONTROL: unrestricted routing takes every banned manoeuvre',
+    `${controlTookTurn}/${total} would be taken without the restriction, so each one is a real prohibition`,
+  );
+  check(
+    enforced === total,
+    'restricted routing takes none of them',
+    `${enforced}/${total} banned sequences absent from the routed path`,
+  );
+  check(
+    stillRoutable === total,
+    'and the destination is STILL reachable, not blocked into failure',
+    `${stillRoutable}/${total} pairs still return a route`,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Search fixtures
 // ---------------------------------------------------------------------------
 console.log('\n--- search fixtures: right KIND of thing, right PLACE ---');
 for (const f of SEARCH_FIXTURES) {
-  const t0 = performance.now();
-  const hits = search.search(f.query, { near: [f.nearLon, f.nearLat], limit: 10 });
-  const ms = performance.now() - t0;
+  // Warm up, then take a MEDIAN of several runs. tests/CLAUDE.md: timing assertions must not be
+  // wall-clock flaky. A single cold call includes JIT compilation of the matcher and spiked past
+  // 100 ms under load while steady-state was under 20 ms, which is a flaky assertion, not a
+  // finding. Gate 7 replaces this with an indexed search and a real budget.
+  search.search(f.query, { near: [f.nearLon, f.nearLat], limit: 10 });
+  const samples: number[] = [];
+  let hits = search.search(f.query, { near: [f.nearLon, f.nearLat], limit: 10 });
+  for (let i = 0; i < 5; i++) {
+    const t0 = performance.now();
+    hits = search.search(f.query, { near: [f.nearLon, f.nearLat], limit: 10 });
+    samples.push(performance.now() - t0);
+  }
+  samples.sort((a, b) => a - b);
+  const ms = samples[2] as number;
 
   if (hits.length === 0) {
     check(false, `"${f.query}": returns at least one hit`, `expected kinds ${f.expectKind.join('/')}`);

@@ -376,13 +376,18 @@ describe('graph: turn restrictions', () => {
     for (const e of banned) expect(g.edgeWayId[e]).toBe(101);
   });
 
-  it('counts a via-way restriction as unsupported rather than dropping it silently', () => {
+  it('counts a MULTI-way via chain as unsupported rather than banning the wrong turn', () => {
     const { nodes, ways } = tJunction();
+    // A chain of several via ways needs a sequence longer than three edges, which the search
+    // cannot check from one predecessor. Treating it as a single via would ban a turn nobody
+    // asked to ban, so it is refused and counted. Single via ways ARE supported; see
+    // tests/engine/routing.test.ts.
     const rel: ClippedRelation = {
       id: 901,
       members: [
         { type: 'way', ref: 100, role: 'from' },
         { type: 'way', ref: 102, role: 'via' },
+        { type: 'way', ref: 101, role: 'via' },
         { type: 'way', ref: 101, role: 'to' },
       ],
       tags: new Map([['type', 'restriction'], ['restriction', 'no_left_turn']]),
@@ -391,11 +396,10 @@ describe('graph: turn restrictions', () => {
     const vertexOfNodeId = new Map<number, number>();
     for (let v = 0; v < g.vertexNodeId.length; v++) vertexOfNodeId.set(g.vertexNodeId[v] as number, v);
     const t = buildTurnTable(g, [rel], vertexOfNodeId, toy(nodes, ways, [rel]));
-    // A restriction silently discarded is an illegal turn the router takes happily.
-    expect(t.stats.byReason['via-way-unsupported']).toBe(1);
-    // A real prohibition on drivable roads that we cannot express is NOT benign.
+    expect(t.stats.byReason['via-way-chain-unsupported']).toBe(1);
+    // Still NOT benign: it is a real prohibition we cannot express.
     expect(t.stats.notHonoured).toBe(1);
-    expect(t.stats.bannedTurnPairs).toBe(0);
+    expect(t.stats.bannedSequenceTriples).toBe(0);
   });
 
   it('counts a conditional restriction as not honoured', () => {
