@@ -18,9 +18,15 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { ROUTES } from '../shared/index.ts';
-import type { ApiError } from '../shared/index.ts';
+import type { ApiError, LngLat, RouteResponse } from '../shared/index.ts';
+import { loadOrBuildClip } from '../pipeline/clip/clip.ts';
+import { buildGraph } from '../pipeline/graph/build.ts';
+import { buildTurnTable } from '../pipeline/graph/restrictions.ts';
+import { SnapIndex } from '../engine/snap.ts';
+import { Router } from '../engine/dijkstra.ts';
+import { readLock } from '../../scripts/fetch-extracts.ts';
 import { mapStyle } from '../pipeline/tiles/style.ts';
-import { BUILD_AREA } from '../../config/city.ts';
+import { BUILD_AREA, SNAP_DESTINATION_M } from '../../config/city.ts';
 
 const DATA = resolve(import.meta.dirname, '../../data');
 const PMTILES = resolve(DATA, 'wayfinder-gn.pmtiles');
@@ -168,6 +174,105 @@ app.get('/tiles/wayfinder-gn.pmtiles', async (req, reply) => {
   reply.header('content-range', `bytes ${start}-${end}/${size}`);
   reply.header('content-length', String(end - start + 1));
   return reply.send(createReadStream(PMTILES, { start, end }));
+});
+
+// ---------------------------------------------------------------------------
+// Routing. The graph is built from the clip cache at boot and held in memory.
+// ---------------------------------------------------------------------------
+console.log('loading graph...');
+const tLoad = performance.now();
+const lock = await readLock();
+const { clipped } = await loadOrBuildClip(
+  lock.extracts.map((e) => ({ name: e.name, localPath: e.localPath, md5: e.md5 })),
+  resolve(DATA, 'clipped.bin'),
+  () => {},
+);
+const graph = buildGraph(clipped);
+const vertexOfNodeId = new Map<number, number>();
+for (let v = 0; v < graph.vertexNodeId.length; v++) vertexOfNodeId.set(graph.vertexNodeId[v] as number, v);
+const turns = buildTurnTable(graph, clipped.relations, vertexOfNodeId, clipped);
+const snapIndex = new SnapIndex(graph, BUILD_AREA);
+const router = new Router(graph, turns);
+console.log(
+  `graph: ${graph.stats.verticesAfterScc.toLocaleString('en-US')} vertices, ` +
+    `${graph.stats.edgesAfterScc.toLocaleString('en-US')} edges, ` +
+    `${turns.stats.enforcedByPair + turns.stats.enforcedBySequence} restrictions enforced, ` +
+    `loaded in ${((performance.now() - tLoad) / 1000).toFixed(1)}s`,
+);
+
+/** Monotonic per process. The client discards anything that is not the latest. Charter item 6. */
+let routeId = 0;
+
+function parsePoint(raw: string | undefined, name: string): LngLat | ApiError {
+  if (typeof raw !== 'string') {
+    return { code: 'INVALID_PARAMETER', message: `Add a ${name} point to the request, as lon,lat.` };
+  }
+  const parts = raw.split(',');
+  const lon = Number(parts[0]);
+  const lat = Number(parts[1]);
+  if (parts.length !== 2 || !Number.isFinite(lon) || !Number.isFinite(lat)) {
+    return { code: 'INVALID_PARAMETER', message: `The ${name} point must be two numbers, lon,lat.` };
+  }
+  if (lat < BUILD_AREA.minLat || lat > BUILD_AREA.maxLat || lon < BUILD_AREA.minLon || lon > BUILD_AREA.maxLon) {
+    return {
+      code: 'OUTSIDE_BUILD_AREA',
+      message: `That ${name} point is outside the mapped area. Pick somewhere in Gautam Buddha Nagar.`,
+      detail: { lon, lat },
+    };
+  }
+  return [lon, lat];
+}
+
+app.get<{ Querystring: { from?: string; to?: string } }>(ROUTES.route, async (req, reply) => {
+  const t0 = performance.now();
+  const from = parsePoint(req.query.from, 'start');
+  if ('code' in from) return reply.code(from.code === 'OUTSIDE_BUILD_AREA' ? 422 : 400).send(from);
+  const to = parsePoint(req.query.to, 'destination');
+  if ('code' in to) return reply.code(to.code === 'OUTSIDE_BUILD_AREA' ? 422 : 400).send(to);
+
+  const tSnap = performance.now();
+  const a = snapIndex.snap(from, 'destination', SNAP_DESTINATION_M);
+  const b = snapIndex.snap(to, 'destination', SNAP_DESTINATION_M);
+  const snapMs = performance.now() - tSnap;
+  for (const [s, name] of [[a, 'start'], [b, 'destination']] as const) {
+    if (s === null) {
+      return reply.code(404).send({
+        code: 'POINT_TOO_FAR_FROM_ROAD',
+        message: `That ${name} is more than ${SNAP_DESTINATION_M} m from any road. Move it closer to a road and try again.`,
+        detail: { radiusM: SNAP_DESTINATION_M },
+      } satisfies ApiError);
+    }
+  }
+
+  const tRoute = performance.now();
+  const r = router.route(a!.edgeId, a!.fraction, b!.edgeId, b!.fraction);
+  const routeMs = performance.now() - tRoute;
+  if (r === null) {
+    return reply.code(404).send({
+      code: 'NO_ROUTE_FOUND',
+      message: 'No legal driving route connects those two points. Try a different destination.',
+    } satisfies ApiError);
+  }
+
+  const body: RouteResponse = {
+    route: {
+      id: ++routeId,
+      cost: r.seconds,
+      distanceM: r.metres,
+      durationS: r.seconds,
+      geometry: r.geometry,
+      edgeIds: r.edges,
+      // Turn-by-turn instructions are gate 7. Empty is honest; a fabricated list is not.
+      instructions: [],
+      profile: 'driving',
+    },
+    timingMs: {
+      snap: Number(snapMs.toFixed(2)),
+      route: Number(routeMs.toFixed(2)),
+      total: Number((performance.now() - t0).toFixed(2)),
+    },
+  };
+  return reply.header('cache-control', 'no-store').send(body);
 });
 
 // Artifact check at boot, loud rather than at first request. A server that starts cleanly and

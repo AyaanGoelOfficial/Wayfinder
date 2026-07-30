@@ -13,6 +13,7 @@ import type { ReactElement } from 'react';
 import { AttributionControl, Map as MapLibreMap, NavigationControl, addProtocol } from 'maplibre-gl';
 import type { MapOptions } from 'maplibre-gl';
 import { Protocol } from 'pmtiles';
+import { ROUTE_LAYERS } from './routeLayers.ts';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
 type StyleSpec = Exclude<MapOptions['style'], string | undefined>;
@@ -20,6 +21,22 @@ type StyleSpec = Exclude<MapOptions['style'], string | undefined>;
 export type MapStatus =
   | { readonly kind: 'loading' }
   | { readonly kind: 'ready'; readonly zoom: number; readonly center: readonly [number, number] }
+  | { readonly kind: 'error'; readonly message: string };
+
+/**
+ * The route is its OWN channel, not a variant of `MapStatus`. Two bugs came from sharing one.
+ *
+ * The summary was a `MapStatus` variant, so `moveend`, which fires on the initial hash jump and on
+ * every pan, overwrote the route distance and time with the zoom readout. Panning made the summary
+ * vanish, and which one you saw depended on whether the route fetch resolved before the first
+ * `moveend`, so a screenshot could show either and neither was reproducible.
+ *
+ * Route FAILURES went down the map's error path too, which put "The map could not load" above a
+ * message about an out-of-area destination. The map had loaded fine. A remedy is only useful if it
+ * names the thing that actually failed, so the two failures are now separate states.
+ */
+export type RouteState =
+  | { readonly kind: 'route'; readonly km: number; readonly minutes: number; readonly points: number }
   | { readonly kind: 'error'; readonly message: string };
 
 /**
@@ -51,7 +68,13 @@ function absolutizePmtiles(style: StyleSpec): StyleSpec {
   return style;
 }
 
-export function MapView({ onStatus }: { readonly onStatus: (s: MapStatus) => void }): ReactElement {
+export function MapView({
+  onStatus,
+  onRoute,
+}: {
+  readonly onStatus: (s: MapStatus) => void;
+  readonly onRoute: (r: RouteState) => void;
+}): ReactElement {
   const container = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -114,7 +137,52 @@ export function MapView({ onStatus }: { readonly onStatus: (s: MapStatus) => voi
         (window as unknown as { __map?: MapLibreMap }).__map = m;
       }
 
-      m.on('load', report);
+      /**
+       * Draws a route when the URL carries ?from=lon,lat&to=lon,lat.
+       *
+       * Deliberately URL-driven for now: gate 3 needs a reproducible cross-city route to
+       * screenshot, and a link is reproducible in a way "I clicked two places" is not. The
+       * search-and-tap flow arrives with the UI that needs it.
+       */
+      const drawRoute = async (): Promise<void> => {
+        const q = new URLSearchParams(window.location.search);
+        const fromQ = q.get('from');
+        const toQ = q.get('to');
+        if (fromQ === null || toQ === null) return;
+        const res = await fetch(`/route?from=${encodeURIComponent(fromQ)}&to=${encodeURIComponent(toQ)}`);
+        if (!res.ok) {
+          // The server's own message carries the remedy, per shared/'s structured error contract.
+          // Reported on the ROUTE channel: the map is fine, the route is not.
+          const err = (await res.json().catch(() => null)) as { message?: string } | null;
+          onRoute({ kind: 'error', message: err?.message ?? `Route failed with status ${res.status}.` });
+          return;
+        }
+        const body = (await res.json()) as {
+          route: { geometry: [number, number][]; distanceM: number; durationS: number; id: number };
+        };
+        const line = {
+          type: 'FeatureCollection' as const,
+          features: [{ type: 'Feature' as const, properties: {}, geometry: { type: 'LineString' as const, coordinates: body.route.geometry } }],
+        };
+        if (m.getSource('route') === undefined) {
+          m.addSource('route', { type: 'geojson', data: line });
+          m.addLayer({ ...ROUTE_LAYERS.casing, source: 'route' } as never);
+          m.addLayer({ ...ROUTE_LAYERS.line, source: 'route' } as never);
+        } else {
+          (m.getSource('route') as unknown as { setData: (d: unknown) => void }).setData(line);
+        }
+        onRoute({
+          kind: 'route',
+          km: body.route.distanceM / 1000,
+          minutes: body.route.durationS / 60,
+          points: body.route.geometry.length,
+        });
+      };
+
+      m.on('load', () => {
+        report();
+        void drawRoute();
+      });
       m.on('moveend', report);
       m.on('error', (e) => {
         // MapLibre reports tile-level failures here. Silence would look like an empty region.
@@ -128,7 +196,7 @@ export function MapView({ onStatus }: { readonly onStatus: (s: MapStatus) => voi
       cancelled = true;
       map?.remove();
     };
-  }, [onStatus]);
+  }, [onStatus, onRoute]);
 
   return <div className="map" ref={container} role="application" aria-label="Map of Greater Noida" />;
 }
