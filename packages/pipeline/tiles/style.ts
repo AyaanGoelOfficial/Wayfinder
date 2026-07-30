@@ -244,6 +244,29 @@ export function mapStyle(opts: StyleOptions): unknown {
         paint: { 'text-color': '#5a5245', 'text-halo-color': '#ffffff', 'text-halo-width': 1.4 },
       },
       {
+        // POI labels matter for navigation: you search for a hospital, then you want to see it
+        // named on the map. They are also the only place local-script names surface here, since
+        // every Devanagari name in the index is on an amenity rather than a settlement.
+        id: 'poi-label',
+        type: 'symbol',
+        source: SRC,
+        'source-layer': 'poi',
+        minzoom: 15,
+        layout: {
+          'text-field': ['coalesce', ['get', 'name'], ['get', 'name:en']],
+          'text-font': ['Noto Sans Regular'],
+          'text-size': 11,
+          'text-anchor': 'top',
+          'text-offset': [0, 0.6],
+          'text-max-width': 9,
+          // NO `text-optional` here. It means "the text may be hidden if the ICON collides",
+          // and with no icon-image the label ends up permanently droppable, so POI labels
+          // vanish entirely while the features are present in the tile. Verified: the tile
+          // covering this view carries a poi feature and rendered nothing until this was removed.
+        },
+        paint: { 'text-color': '#6f675a', 'text-halo-color': '#ffffff', 'text-halo-width': 1.4 },
+      },
+      {
         id: 'place-label',
         type: 'symbol',
         source: SRC,

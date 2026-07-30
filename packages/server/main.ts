@@ -67,8 +67,50 @@ app.get('/style.json', async (_req, reply) => {
   // Same-origin relative path on purpose. The client proxies /tiles to this server, so the
   // browser sees one origin and the 206 assertion at gate 2 is not confounded by CORS.
   return reply.header('cache-control', 'no-store').send(
-    mapStyle({ pmtilesUrl: '/tiles/wayfinder-gn.pmtiles', center: CENTRE, zoom: 11 }),
+    mapStyle({
+      pmtilesUrl: '/tiles/wayfinder-gn.pmtiles',
+      center: CENTRE,
+      zoom: 11,
+      // MapLibre substitutes {fontstack} and {range} itself. Our own generated SDF ranges, so
+      // no public glyph endpoint is contacted at any point.
+      glyphsUrl: '/fonts/{fontstack}/{range}.pbf',
+    }),
   );
+});
+
+/**
+ * SDF glyph ranges, generated offline by the pipeline from vendored Noto faces.
+ *
+ * The fontstack arrives percent-encoded ("Noto%20Sans%20Regular"); Fastify decodes it. The path
+ * is rebuilt from the decoded parts rather than concatenated raw, and both parts are rejected if
+ * they contain a separator, because this is the only route that takes a filename from the client.
+ */
+app.get<{ Params: { stack: string; range: string } }>('/fonts/:stack/:range.pbf', async (req, reply) => {
+  const { stack, range } = req.params;
+  if (/[\\/]|\.\./.test(stack) || !/^\d+-\d+$/.test(range)) {
+    return reply.code(400).send({
+      code: 'INVALID_PARAMETER',
+      message: 'That font range is not valid. Reload the map to request it again.',
+    } satisfies ApiError);
+  }
+  const file = resolve(DATA, 'fonts', stack, `${range}.pbf`);
+  if (!file.startsWith(resolve(DATA, 'fonts'))) {
+    return reply.code(400).send({
+      code: 'INVALID_PARAMETER',
+      message: 'That font range is not valid. Reload the map to request it again.',
+    } satisfies ApiError);
+  }
+  try {
+    const s = await stat(file);
+    reply.header('content-type', 'application/x-protobuf');
+    reply.header('content-length', String(s.size));
+    reply.header('cache-control', 'public, max-age=86400');
+    return reply.send(createReadStream(file));
+  } catch {
+    // A range with no glyphs is normal: MapLibre asks for every range a label might touch.
+    // 404 is the correct answer and MapLibre treats it as "no glyphs here", not as an error.
+    return reply.code(404).send();
+  }
 });
 
 /**

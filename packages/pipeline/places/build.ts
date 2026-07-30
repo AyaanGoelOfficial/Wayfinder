@@ -97,13 +97,21 @@ function kindOf(tags: ReadonlyMap<string, string>): { kind: PlaceKind; category:
   return null;
 }
 
-/** Prefers the local name; falls back to English. Never invents one. */
+/**
+ * Prefers the local name; falls back to English. Never invents one.
+ *
+ * Internal whitespace is collapsed, not merely trimmed. Real OSM names in this extract contain
+ * embedded NEWLINES, which reach the glyph coverage check as an uncoverable codepoint and would
+ * render as a blank box mid-label. A newline inside a name is a tagging mistake, and the right
+ * place to absorb it is here rather than in every consumer.
+ */
 function nameOf(tags: ReadonlyMap<string, string>): string | undefined {
-  const n = tags.get('name');
-  if (n !== undefined && n.trim() !== '') return n.trim();
-  const en = tags.get('name:en');
-  if (en !== undefined && en.trim() !== '') return en.trim();
-  return undefined;
+  const clean = (v: string | undefined): string | undefined => {
+    if (v === undefined) return undefined;
+    const c = v.replace(/\s+/g, ' ').trim();
+    return c === '' ? undefined : c;
+  };
+  return clean(tags.get('name')) ?? clean(tags.get('name:en'));
 }
 
 interface RoadCluster {

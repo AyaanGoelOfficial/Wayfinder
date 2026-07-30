@@ -17,6 +17,7 @@ import { buildGraph } from './graph/build.ts';
 import { buildTurnTable } from './graph/restrictions.ts';
 import { writeClipAsPbf } from './clip/pbfwrite.ts';
 import { buildPlaces } from './places/build.ts';
+import { SUPPORTED_SCRIPTS, buildRanges, isSupportedScript, loadFace } from './glyphs/build.ts';
 import { buildTiles } from './tiles/build-tiles.ts';
 import { readLock } from '../../scripts/fetch-extracts.ts';
 
@@ -226,6 +227,68 @@ await writeFile(
 );
 const placesBytes = (await stat(resolve(DATA, 'places.json'))).size;
 console.log(`  wrote data/places.json  ${mb(placesBytes)}`);
+
+// ---- Stage 3c: SDF glyph ranges, generated offline from vendored fonts ----
+console.log('\n--- stage 3c: SDF glyph ranges ---');
+{
+  const fontDir = resolve(import.meta.dirname, '../../vendor/fonts');
+  const faces = [
+    { name: 'NotoSans-Regular', font: await loadFace(resolve(fontDir, 'NotoSans-Regular.ttf')) },
+    { name: 'NotoSansDevanagari-Regular', font: await loadFace(resolve(fontDir, 'NotoSansDevanagari-Regular.ttf')) },
+    // Urdu is an additional official language of Uttar Pradesh, so Arabic script here is a
+    // local script, not a foreign one.
+    { name: 'NotoNaskhArabic-Regular', font: await loadFace(resolve(fontDir, 'NotoNaskhArabic-Regular.ttf')) },
+  ];
+
+  // COVERAGE IS DERIVED FROM THE DATA, not from a guessed codepoint list. Every codepoint that
+  // appears in any indexed place name must have a glyph, or that label renders as blank boxes.
+  const needed = new Set<number>();
+  for (let cp = 0x20; cp < 0x7f; cp++) needed.add(cp); // ASCII always, for ref shields and numerals
+  for (const p of places.places) {
+    for (const ch of p.name) needed.add(ch.codePointAt(0) as number);
+  }
+
+  const { ranges, stats: gstats } = buildRanges('Noto Sans Regular', faces, needed);
+  const outDir = resolve(DATA, 'fonts', 'Noto Sans Regular');
+  await mkdir(outDir, { recursive: true });
+  for (const [label, bytes] of ranges) await writeFile(resolve(outDir, `${label}.pbf`), bytes);
+
+  console.log(`  fontstack               ${gstats.stackName}`);
+  console.log(`  faces                   ${gstats.faces.join(' + ')}`);
+  console.log(`  codepoints in index     ${n(gstats.codepointsRequested)}`);
+  console.log(`  glyphs rendered         ${n(gstats.glyphsRendered)}`);
+  console.log(`  ranges written          ${n(gstats.rangesWritten)}  (${mb(gstats.totalBytes)})`);
+  console.log(`  build time              ${gstats.seconds} s`);
+
+  // THE ASSERTION, split by whether the gap is an oversight or a scope decision.
+  // In a supported script: a missing glyph means a face is absent or wrong. Hard failure.
+  // Outside them: reported in full, with the characters, as a stated limit rather than a pass.
+  const show = (cps: readonly number[]): string =>
+    cps
+      .slice(0, 40)
+      .map((cp) => `U+${cp.toString(16).toUpperCase().padStart(4, '0')} ${String.fromCodePoint(cp)}`)
+      .join(', ') + (cps.length > 40 ? ', ...' : '');
+
+  const missingSupported = gstats.codepointsMissing.filter(isSupportedScript);
+  const missingUnsupported = gstats.codepointsMissing.filter((cp) => !isSupportedScript(cp));
+
+  console.log(`  scripts supported       ${SUPPORTED_SCRIPTS.map((s) => s.name).join(', ')}`);
+  if (missingUnsupported.length > 0) {
+    console.log(
+      `  outside those scripts   ${n(missingUnsupported.length)} codepoint(s), which will render as blank boxes:`,
+    );
+    console.log(`    ${show(missingUnsupported)}`);
+  }
+  if (missingSupported.length > 0) {
+    console.error(
+      `\nFAIL: ${missingSupported.length} codepoint(s) in a SUPPORTED script have no glyph, ` +
+        `so a vendored face is missing or wrong.`,
+    );
+    console.error(`  ${show(missingSupported)}`);
+    process.exit(1);
+  }
+  console.log('  coverage                every codepoint in a supported script has a glyph');
+}
 
 // ---- Stage 4: write the clipped subset back out as a PBF, for tilemaker ----
 console.log('\n--- stage 4: clipped subset to .osm.pbf (one source, three derivatives) ---');

@@ -35,8 +35,13 @@ export default defineConfig(async () => {
       // Bound to all interfaces only when HTTPS is on, which is the phone-testing case. A plain
       // HTTP dev server should not be reachable from the LAN by default.
       host: useHttps ? true : 'localhost',
+      // EVERY server path must be listed. An unlisted path falls through to Vite's SPA
+      // fallback and returns index.html with a 200, so the client receives HTML where it
+      // expected binary. That is how the glyph ranges silently failed: MapLibre reported
+      // "Unimplemented type: 4" from parsing "<!doctype html>" as protobuf, then fell back to
+      // local font rendering, which looks almost right and is not our glyphs at all.
       proxy: Object.fromEntries(
-        ['/tiles', '/style.json', '/health', '/route', '/snap', '/search'].map((p) => [
+        ['/tiles', '/fonts', '/style.json', '/health', '/route', '/snap', '/search'].map((p) => [
           p,
           { target: API_TARGET, changeOrigin: false },
         ]),
