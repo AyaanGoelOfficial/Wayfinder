@@ -106,6 +106,14 @@ export function MapView({ onStatus }: { readonly onStatus: (s: MapStatus) => voi
         const c = m.getCenter();
         onStatus({ kind: 'ready', zoom: m.getZoom(), center: [c.lng, c.lat] });
       };
+      // DEV ONLY. Exposes the map for the browser gates, which need querySourceFeatures and
+      // queryRenderedFeatures to tell "the tile has no feature" apart from "the layer did not
+      // draw it". Those are indistinguishable from a screenshot, and guessing between them is
+      // how a label bug gets "fixed" without a cause. Stripped from production builds.
+      if (import.meta.env.DEV) {
+        (window as unknown as { __map?: MapLibreMap }).__map = m;
+      }
+
       m.on('load', report);
       m.on('moveend', report);
       m.on('error', (e) => {

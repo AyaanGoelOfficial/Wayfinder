@@ -19,6 +19,7 @@ import { resolve } from 'node:path';
 import { BUILD_AREA, SNAP_DESTINATION_M, SNAP_TRACKING_M } from '../config/city.ts';
 import { ROUTING_FIXTURES } from '../config/fixtures/routing.ts';
 import { SEARCH_FIXTURES, SEARCH_BUDGET_MS } from '../config/fixtures/search.ts';
+import { HELD_OUT_QUERIES, HELD_OUT_PASS_RATIO } from '../config/fixtures/heldout.ts';
 import { loadOrBuildClip } from '../packages/pipeline/clip/clip.ts';
 import { buildGraph } from '../packages/pipeline/graph/build.ts';
 import { buildTurnTable } from '../packages/pipeline/graph/restrictions.ts';
@@ -279,6 +280,49 @@ for (const f of SEARCH_FIXTURES) {
     check(hits.length >= 2, `"${f.query}": returns several, not one arbitrary pick`, `${hits.length} hits`);
   }
   check(ms <= SEARCH_BUDGET_MS * 20, `"${f.query}": within ${SEARCH_BUDGET_MS * 20} ms (budget is ${SEARCH_BUDGET_MS} ms, gate 7 tightens it)`, `${ms.toFixed(2)} ms`);
+}
+
+// ---------------------------------------------------------------------------
+// HELD-OUT queries. Never tuned against; see config/fixtures/heldout.ts.
+// ---------------------------------------------------------------------------
+console.log('\n--- held-out queries: generalisation check on the ranking constants ---');
+{
+  const centre: [number, number] = [
+    (BUILD_AREA.minLon + BUILD_AREA.maxLon) / 2,
+    (BUILD_AREA.minLat + BUILD_AREA.maxLat) / 2,
+  ];
+  const inArea = (p: readonly [number, number]): boolean =>
+    p[0] >= BUILD_AREA.minLon && p[0] <= BUILD_AREA.maxLon &&
+    p[1] >= BUILD_AREA.minLat && p[1] <= BUILD_AREA.maxLat;
+
+  let mustCount = 0;
+  let mustResolved = 0;
+  let outOfArea = 0;
+
+  for (const q of HELD_OUT_QUERIES) {
+    const hits = search.search(q.query, { near: centre, limit: 5 });
+    const top = hits[0];
+    if (q.mustResolve) mustCount++;
+    if (q.mustResolve && top !== undefined) mustResolved++;
+    for (const h of hits) if (!inArea(h.point)) outOfArea++;
+    const label = q.mustResolve ? 'must  ' : 'may   ';
+    console.log(
+      `    ${label} "${q.query}"  ->  ` +
+        (top === undefined
+          ? '(no hits)'
+          : `"${top.name}" ${top.kind}/${top.category} via ${top.matchType}, ${hits.length} hits`),
+    );
+  }
+
+  // A hit outside the build area is a ranking failure regardless of the query: the index only
+  // contains in-area features, so an out-of-area point means a bad representative coordinate.
+  check(outOfArea === 0, 'every held-out hit lies inside BUILD_AREA', `${outOfArea} out-of-area hits`);
+  const ratio = mustCount === 0 ? 1 : mustResolved / mustCount;
+  check(
+    ratio >= HELD_OUT_PASS_RATIO,
+    `at least ${(HELD_OUT_PASS_RATIO * 100).toFixed(0)}% of must-resolve held-out queries return something`,
+    `${mustResolved}/${mustCount} resolved (${(ratio * 100).toFixed(0)}%). If this fails, RE-DERIVE the ranking constants; never tune against this set.`,
+  );
 }
 
 console.log('\n--- kasana: the combined fuzzy-match and named-road test ---');

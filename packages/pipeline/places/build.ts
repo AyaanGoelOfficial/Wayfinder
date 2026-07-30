@@ -244,24 +244,44 @@ export function buildPlaces(clipped: Clipped): PlacesIndex {
   }
 
   // ---- Relations: named multipolygons and boundaries ----
+  // Way lookup, built once. A relation's point needs its member ways' nodes, not just its
+  // direct node members; see the note below.
+  const wayById = new Map<number, (typeof clipped.ways)[number]>();
+  for (const w of clipped.ways) wayById.set(w.id, w);
   for (const rel of clipped.relations) {
     const name = nameOf(rel.tags);
     if (name === undefined) continue;
     const k = kindOf(rel.tags);
     if (k === null) continue;
-    // A relation's geometry is not assembled here, so its point comes from the mean of its
-    // member nodes that the clip holds. Coarse, and honest about being coarse: it is only used
-    // to place a label and to rank by distance, never to route to.
+    // A relation's geometry is not assembled here, so its point is the mean of whatever member
+    // geometry the clip holds. Coarse, and honest about being coarse: it places a label and
+    // ranks by distance, never routes.
+    //
+    // MEMBER WAYS COUNT, not just member nodes. Cross-validation against libosmium found 23
+    // named indexable relations against our 5: a multipolygon (a lake, a park, a campus) usually
+    // has ONLY way members, so a node-only mean skipped 18 of 23 and silently lost exactly the
+    // large named areas people search for.
     let sumLat = 0;
     let sumLon = 0;
     let n = 0;
     for (const m of rel.members) {
-      if (m.type !== 'node') continue;
-      const i = clipped.nodeIndex.get(m.ref);
-      if (i < 0) continue;
-      sumLat += latOf(i);
-      sumLon += lonOf(i);
-      n++;
+      if (m.type === 'node') {
+        const i = clipped.nodeIndex.get(m.ref);
+        if (i < 0) continue;
+        sumLat += latOf(i);
+        sumLon += lonOf(i);
+        n++;
+      } else if (m.type === 'way') {
+        const w = wayById.get(m.ref);
+        if (w === undefined) continue;
+        for (const ref of w.refs) {
+          const i = clipped.nodeIndex.get(ref);
+          if (i < 0) continue;
+          sumLat += latOf(i);
+          sumLon += lonOf(i);
+          n++;
+        }
+      }
     }
     if (n === 0) continue;
     places.push({

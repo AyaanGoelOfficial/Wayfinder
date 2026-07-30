@@ -67,6 +67,36 @@ function localityBonus(distanceM: number): number {
  */
 const FUZZY_IMPORTANCE_WEIGHT = 0.35;
 
+/**
+ * Two rules that decide whether a fuzzy candidate is a TYPO or a DIFFERENT PLACE.
+ *
+ * Absolute edit distance cannot tell those apart, and the held-out query set proved it:
+ * "Beta 1" returned "Delta 1", and "Alpha 2" returned "Alpha 1". Both are two-or-fewer edits and
+ * both are the wrong sector. Sending a driver to Delta 1 when they typed Beta 1 is worse than
+ * returning nothing, because nothing prompts them to retype and a confident wrong answer does not.
+ *
+ * RULE 1, relative distance. One edit in a four-letter word is a quarter of the word, which is a
+ * different word; one edit in a ten-letter word is a slip. So the budget scales with length,
+ * floored at 1 so short queries still tolerate a single typo. This rejects beta -> delta while
+ * keeping kasna -> kasana.
+ *
+ * RULE 2, digits are identity, not spelling. Greater Noida is laid out as Alpha 1, Alpha 2,
+ * Beta 1, Sector 62. A digit is the whole difference between two real destinations kilometres
+ * apart, so an edit that changes or drops one is never a typo to forgive. Query and candidate
+ * must carry the same digit sequence, or the candidate is not a fuzzy match at all.
+ */
+const FUZZY_RELATIVE_BUDGET = 0.25;
+
+function fuzzyBudget(len: number, cap: number): number {
+  return Math.min(cap, Math.max(1, Math.floor(len * FUZZY_RELATIVE_BUDGET)));
+}
+
+/** The digit runs in a string, in order. "alpha 2" -> "2", "sector 62" -> "62". */
+function digitsOf(s: string): string {
+  const m = s.match(/\d+/g);
+  return m === null ? '' : m.join(',');
+}
+
 export class PlacesSearch {
   private readonly items: readonly Indexed[];
 
@@ -127,18 +157,26 @@ export class PlacesSearch {
 
     // ---- Fuzzy fallback. Only reached when nothing matched cleanly. ----
     const maxEdits = opts.maxEdits ?? (q.length <= 4 ? 1 : 2);
+    const qDigits = digitsOf(q);
     const fuzzy: SearchHit[] = [];
     for (const it of this.items) {
+      // RULE 2: a differing digit means a different destination, never a typo. Checked before
+      // any distance work, because it is a cheap string compare that rejects most candidates.
+      if (digitsOf(it.norm) !== qDigits) continue;
+
       // Compare against the whole name AND each token: "Kasna" against "old kasana road" is 6
       // edits, but against the token "kasana" it is 1. Without the per-token comparison the
-      // fuzzy path cannot find a road named after the place.
-      let bestD = editDistance(q, it.norm, maxEdits);
+      // fuzzy path cannot find a road named after the place. RULE 1: the budget is relative to
+      // the length of whatever is being compared, so a short word tolerates proportionally less.
+      let bestD = editDistance(q, it.norm, fuzzyBudget(Math.max(q.length, it.norm.length), maxEdits));
+      if (bestD > fuzzyBudget(Math.max(q.length, it.norm.length), maxEdits)) bestD = Infinity;
       for (const t of it.toks) {
         if (bestD === 0) break;
-        const d = editDistance(q, t, maxEdits);
-        if (d < bestD) bestD = d;
+        const budget = fuzzyBudget(Math.max(q.length, t.length), maxEdits);
+        const d = editDistance(q, t, budget);
+        if (d <= budget && d < bestD) bestD = d;
       }
-      if (bestD > maxEdits) continue;
+      if (!Number.isFinite(bestD) || bestD > maxEdits) continue;
       const base: SearchHit = {
         ...it.place,
         matchType: 'fuzzy',

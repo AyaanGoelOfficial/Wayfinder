@@ -259,10 +259,17 @@ export function mapStyle(opts: StyleOptions): unknown {
           'text-anchor': 'top',
           'text-offset': [0, 0.6],
           'text-max-width': 9,
-          // NO `text-optional` here. It means "the text may be hidden if the ICON collides",
-          // and with no icon-image the label ends up permanently droppable, so POI labels
-          // vanish entirely while the features are present in the tile. Verified: the tile
-          // covering this view carries a poi feature and rendered nothing until this was removed.
+          // No `text-optional`, because it is meaningless without an `icon-image`: it means
+          // "the text may be hidden if the ICON collides". Omitted as hygiene, NOT as a bug fix.
+          // An earlier comment here claimed removing it is what made POI labels appear. A
+          // bisection with a render barrier DISPROVED that: with it set true the label still
+          // renders, while a deliberately wrong `source-layer` renders zero, which is the
+          // control proving the measurement can see a dark layer at all.
+          //
+          // The real cause of the blank POI layer was never in this style. The client was
+          // holding a style fetched BEFORE the server restarted, because navigating to the same
+          // URL does not remount the map under Vite HMR. Reload via about:blank when verifying
+          // a style change, or the screenshot describes the previous build.
         },
         paint: { 'text-color': '#6f675a', 'text-halo-color': '#ffffff', 'text-halo-width': 1.4 },
       },
