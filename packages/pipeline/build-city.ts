@@ -16,11 +16,15 @@ import type { ClipExtractInput } from './clip/clip.ts';
 import { buildGraph } from './graph/build.ts';
 import { buildTurnTable } from './graph/restrictions.ts';
 import { writeClipAsPbf } from './clip/pbfwrite.ts';
+import { buildTiles } from './tiles/build-tiles.ts';
 import { readLock } from '../../scripts/fetch-extracts.ts';
 
 const DATA = resolve(import.meta.dirname, '../../data');
 const CLIP_CACHE = resolve(DATA, 'clipped.bin');
 const CLIP_PBF = resolve(DATA, 'clipped.osm.pbf');
+const PMTILES = resolve(DATA, 'wayfinder-gn.pmtiles');
+/** Set BUILD_SKIP_TILES=1 to iterate on the graph without paying for tilemaker. */
+const SKIP_TILES = process.env['BUILD_SKIP_TILES'] === '1';
 
 function mb(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(0)} MB`;
@@ -231,6 +235,31 @@ console.log('\n  round-tripping the written PBF through our own decoder:');
   console.log('    round-trip OK');
 }
 
+// ---- Stage 5: vector tiles ----
+let tiles: Awaited<ReturnType<typeof buildTiles>> | null = null;
+if (SKIP_TILES) {
+  console.log('\n--- stage 5: tiles SKIPPED (BUILD_SKIP_TILES=1) ---');
+} else {
+  console.log('\n--- stage 5: vector tiles via tilemaker ---');
+  tiles = await buildTiles(CLIP_PBF, PMTILES, DATA, log);
+  console.log(`\n  exit code               ${tiles.exitCode}`);
+  console.log(`  tilemaker wall time     ${tiles.tilemakerSeconds} s`);
+  console.log(`  tilemaker peak RSS      ${mb(tiles.tilemakerPeakRssBytes)}`);
+  if (tiles.pmtiles) {
+    const p = tiles.pmtiles;
+    console.log(`  tiles generated         ${n(p.tilesFound)} (z${p.minZoom}..z${p.maxZoom})`);
+    console.log(`  unique tile bodies      ${n(p.uniqueTiles)}, ${n(p.duplicateTilesShared)} shared`);
+    console.log(`  root directory          ${n(p.rootDirectoryBytes)} bytes, gzipped, no leaves`);
+    console.log(`  pack time               ${p.seconds} s`);
+  }
+  console.log(`  .pmtiles size           ${mb(tiles.pmtilesBytes)} (${n(tiles.pmtilesBytes)} bytes)`);
+  if (!tiles.ok) {
+    console.error('\nFAIL: tilemaker did not produce a .pmtiles. Last stderr:');
+    console.error(tiles.stderrTail);
+    process.exit(1);
+  }
+}
+
 // ---- Report ----
 const report = {
   builtAt: new Date().toISOString(),
@@ -249,6 +278,7 @@ const report = {
   graph: gs,
   restrictions: rs,
   clippedPbf: ps,
+  tiles,
 };
 await writeFile(resolve(DATA, 'build-report.json'), `${JSON.stringify(report, null, 2)}\n`, 'utf8');
 console.log('\nwrote data/build-report.json');

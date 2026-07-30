@@ -1,0 +1,127 @@
+/*
+ * Base styles. Deliberately tiny: at gate 2 the product is a full-bleed map, and the map is the
+ * content. Chrome added later has to earn its pixels.
+ *
+ * ui.md compliance notes, so the next session does not have to re-derive them:
+ *  - `html { font-size: 100% }` and every size in rem. A px font size ignores the reader's
+ *    browser text setting, and on a phone in daylight that setting is not decoration.
+ *  - Type scale: 3 sizes (caption .75rem, body 1rem, display 1.25rem), 2 weights (400, 600).
+ *    Under the 5-size / 3-weight cap with room to spare.
+ *  - One saturated accent, matching ROUTE_ACCENT in the map style. Everything else is a light
+ *    neutral, so the route line is the only thing in the whole product shouting.
+ *  - Light source is top-left and consistent: the status chip's shadow falls down and right.
+ */
+
+html {
+  font-size: 100%;
+}
+
+:root {
+  /* Tokens named by role, never by value, so a role can be retuned in one place. */
+  --text-caption: 0.75rem;
+  --text-body: 1rem;
+  --text-display: 1.25rem;
+
+  --weight-body: 400;
+  --weight-label: 600;
+
+  /* Three neutrals, all light, so none of them competes with the accent. */
+  --surface: #ffffff;
+  --surface-sunk: #f4f1ec;
+  --hairline: #ddd7cc;
+  --ink: #3d372e;
+  --ink-quiet: #6f675a;
+
+  /* The one saturated colour in the product. Same value as ROUTE_ACCENT in the map style. */
+  --accent: #1f6feb;
+
+  /* One spacing scale, derived from body line-height: 1rem * 1.5 = 1.5rem. */
+  --space-unit: 1.5rem;
+
+  --radius: 0.5rem;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, "Segoe UI", "Noto Sans", "Nirmala UI", sans-serif;
+  font-size: var(--text-body);
+  font-weight: var(--weight-body);
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--surface-sunk);
+  /* Free, and both help Devanagari and Latin render as intended. */
+  font-kerning: normal;
+  font-optical-sizing: auto;
+  /* The map fills the viewport; the page itself must never scroll sideways. */
+  overflow: hidden;
+}
+
+#root,
+.app {
+  position: fixed;
+  inset: 0;
+}
+
+.map {
+  position: absolute;
+  inset: 0;
+}
+
+.status {
+  position: absolute;
+  top: calc(var(--space-unit) / 2);
+  left: calc(var(--space-unit) / 2);
+  /* Never wider than the viewport minus its own gutters, so 320px cannot overflow. */
+  max-inline-size: calc(100vw - var(--space-unit));
+  min-inline-size: 0;
+  padding: calc(var(--space-unit) / 3) calc(var(--space-unit) / 2);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  /* Layered elevation, light from top-left: a tight contact shadow plus a wide ambient one,
+     both tinted toward the surface beneath rather than toward black. */
+  box-shadow:
+    0 1px 2px rgba(61, 55, 46, 0.08),
+    0 6px 16px rgba(61, 55, 46, 0.06);
+  font-size: var(--text-caption);
+  color: var(--ink-quiet);
+  /* Numbers that update in place must not make the chip jitter as digits change width. */
+  font-variant-numeric: tabular-nums;
+}
+
+.status strong {
+  display: block;
+  font-size: var(--text-display);
+  font-weight: var(--weight-label);
+  color: var(--ink);
+  line-height: 1.2;
+}
+
+.status[data-state="error"] {
+  border-color: #c2410c;
+  /* Semantic state pairs colour with a second channel (the bar) so it survives greyscale. */
+  border-left-width: 4px;
+}
+
+.status[data-state="ready"] {
+  border-left: 4px solid var(--accent);
+}
+
+:where(a, button, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Collapse durations, never delete the final state. */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
