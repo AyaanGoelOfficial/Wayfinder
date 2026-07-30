@@ -9,6 +9,7 @@ export default defineConfig({
       '@config': r('./config'),
       '@wayfinder/shared': r('./packages/shared/index.ts'),
       '@wayfinder/engine': r('./packages/engine/index.ts'),
+      '@wayfinder/pipeline': r('./packages/pipeline'),
     },
   },
   test: {
