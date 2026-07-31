@@ -19,12 +19,23 @@
  * structural: settlement rank first, then POI significance, then road class. It is stated in
  * one table rather than tuned per query.
  */
+import { BUILD_AREA } from '../../../config/city.ts';
 import { haversineM } from '../../shared/geo.ts';
 import { hasDevanagari, normalise } from '../../shared/text.ts';
 import type { Clipped } from '../clip/clip.ts';
 import type { Place, PlaceKind } from '../../shared/index.ts';
 
 const COORD_SCALE = 1e7;
+
+/**
+ * BUILD_AREA in the same scaled integers the clip compares, so containment here and there cannot
+ * disagree at the boundary. A float comparison already bit once: node 9942251826 sits 1 ULP above
+ * maxLat, which is the difference between keeping it and dropping it.
+ */
+const AREA_MIN_LAT_S = Math.round(BUILD_AREA.minLat * COORD_SCALE);
+const AREA_MAX_LAT_S = Math.round(BUILD_AREA.maxLat * COORD_SCALE);
+const AREA_MIN_LON_S = Math.round(BUILD_AREA.minLon * COORD_SCALE);
+const AREA_MAX_LON_S = Math.round(BUILD_AREA.maxLon * COORD_SCALE);
 
 /**
  * Settlement ranks. A city must outrank a neighbourhood of the same name, or searching a
@@ -63,6 +74,12 @@ export interface PlacesStats {
   readonly pois: number;
   readonly withDevanagariName: number;
   readonly distinctNormalisedNames: number;
+  /**
+   * Candidates dropped because they lie outside BUILD_AREA. NOT zero and should not be: the clip
+   * carries out-of-area nodes so boundary-crossing ways keep complete geometry, and some of them
+   * are tagged. A zero here would mean this filter stopped running.
+   */
+  readonly skippedOutsideArea: number;
   readonly buildSeconds: number;
 }
 
@@ -137,6 +154,22 @@ export function buildPlaces(clipped: Clipped): PlacesIndex {
   const latOf = (idx: number): number => (clipped.nodeLat[idx] as number) / COORD_SCALE;
   const lonOf = (idx: number): number => (clipped.nodeLon[idx] as number) / COORD_SCALE;
 
+  /**
+   * Is this node INSIDE the build area?
+   *
+   * The clip deliberately carries nodes OUTSIDE the area so that ways crossing the boundary keep
+   * complete geometry. Those nodes arrive with their tags, and nothing here used to check, so a
+   * tagged one became a searchable destination outside the city. Found by the places oracle:
+   * Sikandarpur railway station at lon 77.784644, past maxLon 77.768478. It was not alone.
+   * Tughlakabad Fort, in Delhi, was indexed the same way.
+   */
+  const nodeInArea = (idx: number): boolean => {
+    const la = clipped.nodeLat[idx] as number;
+    const lo = clipped.nodeLon[idx] as number;
+    return la >= AREA_MIN_LAT_S && la <= AREA_MAX_LAT_S && lo >= AREA_MIN_LON_S && lo <= AREA_MAX_LON_S;
+  };
+  let skippedOutsideArea = 0;
+
   // ---- Nodes ----
   for (const [nodeId, tags] of clipped.nodeTags) {
     const name = nameOf(tags);
@@ -145,6 +178,10 @@ export function buildPlaces(clipped: Clipped): PlacesIndex {
     if (k === null) continue;
     const idx = clipped.nodeIndex.get(nodeId);
     if (idx < 0) continue;
+    if (!nodeInArea(idx)) {
+      skippedOutsideArea++;
+      continue;
+    }
     places.push({
       id: nodeId,
       name,
@@ -174,11 +211,21 @@ export function buildPlaces(clipped: Clipped): PlacesIndex {
     for (const ref of way.refs) {
       const i = clipped.nodeIndex.get(ref);
       if (i < 0) continue;
+      // IN-AREA nodes only. A way crossing the boundary keeps its out-of-area geometry for the
+      // graph, but averaging those points drags the label outside the city: "Loni Road" landed at
+      // lat 28.680166 against a maxLat of 28.679899. Averaging only the part inside the area puts
+      // the point on the stretch that is actually here.
+      if (!nodeInArea(i)) continue;
       sumLat += latOf(i);
       sumLon += lonOf(i);
       n++;
     }
-    if (n === 0) continue;
+    // No in-area node at all means the way only clipped the corner of the box. It belongs to a
+    // neighbouring district, not this one.
+    if (n === 0) {
+      skippedOutsideArea++;
+      continue;
+    }
     const lat = sumLat / n;
     const lon = sumLon / n;
 
@@ -264,10 +311,12 @@ export function buildPlaces(clipped: Clipped): PlacesIndex {
     let sumLat = 0;
     let sumLon = 0;
     let n = 0;
+    // IN-AREA member nodes only, for the same reason as ways above: a boundary relation reaching
+    // into the next district would otherwise place its label there.
     for (const m of rel.members) {
       if (m.type === 'node') {
         const i = clipped.nodeIndex.get(m.ref);
-        if (i < 0) continue;
+        if (i < 0 || !nodeInArea(i)) continue;
         sumLat += latOf(i);
         sumLon += lonOf(i);
         n++;
@@ -276,14 +325,17 @@ export function buildPlaces(clipped: Clipped): PlacesIndex {
         if (w === undefined) continue;
         for (const ref of w.refs) {
           const i = clipped.nodeIndex.get(ref);
-          if (i < 0) continue;
+          if (i < 0 || !nodeInArea(i)) continue;
           sumLat += latOf(i);
           sumLon += lonOf(i);
           n++;
         }
       }
     }
-    if (n === 0) continue;
+    if (n === 0) {
+      skippedOutsideArea++;
+      continue;
+    }
     places.push({
       id: rel.id,
       name,
@@ -319,6 +371,7 @@ export function buildPlaces(clipped: Clipped): PlacesIndex {
       pois,
       withDevanagariName,
       distinctNormalisedNames: names.size,
+      skippedOutsideArea,
       buildSeconds: Number(((performance.now() - t0) / 1000).toFixed(1)),
     },
   };

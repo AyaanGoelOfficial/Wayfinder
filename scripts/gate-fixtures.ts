@@ -279,7 +279,22 @@ for (const f of SEARCH_FIXTURES) {
   if (f.expectMultiple === true) {
     check(hits.length >= 2, `"${f.query}": returns several, not one arbitrary pick`, `${hits.length} hits`);
   }
-  check(ms <= SEARCH_BUDGET_MS * 20, `"${f.query}": within ${SEARCH_BUDGET_MS * 20} ms (budget is ${SEARCH_BUDGET_MS} ms, gate 7 tightens it)`, `${ms.toFixed(2)} ms`);
+  // A CORRECTNESS GATE DOES NOT ASSERT WALL CLOCK. This used to fail at `SEARCH_BUDGET_MS * 20`
+  // (100 ms) and it flaked: the same five queries measured 34 to 80 ms idle and blew the ceiling
+  // whenever anything else ran on the machine, so the fix was always "run it again", which is how
+  // a gate stops meaning anything. `tests/CLAUDE.md` forbids exactly this.
+  //
+  // What survives is a PATHOLOGY check, two orders of magnitude above the observed range. It
+  // cannot catch a regression from 40 ms to 90 ms, and is not pretending to: it catches an
+  // accidental O(n^2) or a hang. The real latency budget belongs to `npm run bench` at gate 5,
+  // measured properly as p50/p95/p99 on an idle machine, and `SEARCH_BUDGET_MS` is what it holds
+  // the search to there.
+  const PATHOLOGICAL_MS = 2_000;
+  check(
+    ms <= PATHOLOGICAL_MS,
+    `"${f.query}": not pathologically slow (under ${PATHOLOGICAL_MS} ms)`,
+    `${ms.toFixed(2)} ms. Budget is ${SEARCH_BUDGET_MS} ms and is enforced by the benchmark, not here.`,
+  );
 }
 
 // ---------------------------------------------------------------------------

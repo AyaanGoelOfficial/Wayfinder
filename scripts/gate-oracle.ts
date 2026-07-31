@@ -1,10 +1,26 @@
 /**
  * Cross-validates the clip and the places index against an independent oracle. `npm run gate:oracle`.
  *
- * The oracle is `scripts/oracle-places.py`: libosmium's C++ PBF decoder plus Python tag handling,
- * reading the RAW extracts. Nothing in it shares code with the pipeline, so a decoder bug, a
- * coordinate bug, a dedupe bug or a name-selection bug shows up as a set difference rather than
- * as a plausible-looking number nobody can check.
+ * The oracle is `scripts/oracle-places.py`: libosmium's C++ PBF decoder plus Python tag handling.
+ * Nothing in it shares code with the pipeline, so a decoder bug, a coordinate bug, a dedupe bug
+ * or a name-selection bug shows up as a set difference rather than as a plausible-looking number
+ * nobody can check.
+ *
+ * TWO LAYERS, because they cost three orders of magnitude apart.
+ *
+ * DEFAULT reads `data/clipped.osm.pbf`, our own written PBF, and validates two real things: that
+ * `pbfwrite.ts` emitted what the clip actually holds (libosmium reads the file, and its counts
+ * must match the independent `clipped.bin` cache), and that the places rules produce the same
+ * index. About six minutes.
+ *
+ * `--full` ALSO re-derives the clip from the RAW extracts, which validates the selection step
+ * itself. It is opt-in because it is 91.5 million Python callbacks: measured at roughly 6,200
+ * objects per second, that is some four hours. It has NOT been run to completion, and nothing in
+ * this repo claims otherwise.
+ *
+ * The honest limit of the default layer: it cannot see an element the clip wrongly DROPPED, since
+ * it starts from the clip's own output. That gap is exactly what `--full` covers, and it is the
+ * reason the flag exists rather than the check being deleted.
  *
  * WHY SET DIFFERENCES AND NOT COUNTS. Two counts can match while naming different elements, which
  * is exactly what a compensating pair of bugs looks like. Every comparison here is over ids or
@@ -49,7 +65,8 @@ interface Oracle {
   readonly relPlaces: Record<string, OraclePlace>;
   readonly roadWays: Record<string, OracleRoad>;
   readonly distinctRoadNames: readonly string[];
-  readonly withDevanagariName: number;
+  readonly devanagariNonRoad: number;
+  readonly devanagariRoadNames: number;
 }
 
 const failures: string[] = [];
@@ -116,8 +133,11 @@ function runOracle(paths: readonly string[]): Promise<Oracle> {
   });
 }
 
+const FULL = process.argv.includes('--full');
 const lock = await readLock();
-const paths = lock.extracts.map((e) => e.localPath);
+const paths = FULL
+  ? lock.extracts.map((e) => e.localPath)
+  : [resolve(DATA, 'clipped.osm.pbf')];
 
 /**
  * The oracle pass is CACHED on the extract checksums.
@@ -130,12 +150,16 @@ const paths = lock.extracts.map((e) => e.localPath);
  * Lives in `data/`, which is git-ignored and regenerable by definition. Delete it to force a
  * fresh pass.
  */
-const ORACLE_CACHE_VERSION = 1;
-const cachePath = resolve(DATA, 'oracle-places.json');
-const cacheKey = `v${ORACLE_CACHE_VERSION}:${lock.extracts.map((e) => `${e.name}=${e.md5}`).join(',')}`;
+const ORACLE_CACHE_VERSION = 3;
+const cachePath = resolve(DATA, `oracle-places${FULL ? '-full' : ''}.json`);
+const cacheKey = `v${ORACLE_CACHE_VERSION}:${FULL ? 'full' : 'clip'}:${lock.extracts.map((e) => `${e.name}=${e.md5}`).join(',')}`;
 
 console.log('=== places oracle gate ===');
-console.log(`  oracle    pyosmium over ${paths.length} raw extracts, same order as the pipeline`);
+console.log(
+  FULL
+    ? `  oracle    pyosmium over ${paths.length} RAW extracts, same order as the pipeline`
+    : '  oracle    pyosmium over data/clipped.osm.pbf. Add --full to re-derive from raw extracts.',
+);
 
 let oracle: Oracle | null = null;
 try {
@@ -151,7 +175,11 @@ try {
 }
 
 if (oracle === null) {
-  console.log('  this decodes 546 MB of raw extract. Expect tens of minutes; progress follows.');
+  console.log(
+    FULL
+      ? '  this decodes 546 MB of raw extract at about 6,200 objects/s. Expect HOURS; progress follows.'
+      : '  decoding data/clipped.osm.pbf, about six minutes; progress follows.',
+  );
   const tOracle = performance.now();
   oracle = await runOracle(paths);
   console.log(
@@ -177,10 +205,10 @@ const places = buildPlaces(clipped);
 // Clip stage. Checked FIRST: if the clip disagrees, every places difference below is a
 // consequence rather than a finding, and reading them the other way round wastes the signal.
 // ---------------------------------------------------------------------------
-console.log('\n--- clip stage ---');
+console.log(FULL ? '\n--- clip selection, from raw extracts ---' : '\n--- written PBF vs the clip cache ---');
 check(
   stats.nodesInAreaUnion === oracle.nodesInArea,
-  'in-area node count agrees with libosmium',
+  FULL ? 'in-area node selection agrees with libosmium' : 'the written PBF holds every node the clip cache does',
   `ours ${stats.nodesInAreaUnion.toLocaleString('en-US')}, oracle ${oracle.nodesInArea.toLocaleString('en-US')}`,
 );
 check(
@@ -193,18 +221,31 @@ check(
   'kept-relation count agrees',
   `ours ${stats.keptRelations.toLocaleString('en-US')}, oracle ${oracle.relationsKept.toLocaleString('en-US')}`,
 );
-check(
-  stats.duplicates.nodes === oracle.duplicates.nodes && stats.duplicates.ways === oracle.duplicates.ways,
-  'seam duplicate counts agree',
-  `ours nodes ${stats.duplicates.nodes.toLocaleString('en-US')} ways ${stats.duplicates.ways.toLocaleString('en-US')}, oracle nodes ${oracle.duplicates.nodes.toLocaleString('en-US')} ways ${oracle.duplicates.ways.toLocaleString('en-US')}`,
-);
-// A zero here is a bug, not a clean run: the Central/Northern seam crosses the build area, so
-// overlapping elements are guaranteed. This is the positive control for the dedupe itself.
-check(
-  oracle.duplicates.nodes > 0,
-  'the oracle independently sees the seam overlap (control for the dedupe)',
-  `${oracle.duplicates.nodes.toLocaleString('en-US')} duplicate node ids seen by libosmium`,
-);
+
+if (FULL) {
+  check(
+    stats.duplicates.nodes === oracle.duplicates.nodes && stats.duplicates.ways === oracle.duplicates.ways,
+    'seam duplicate counts agree',
+    `ours nodes ${stats.duplicates.nodes.toLocaleString('en-US')} ways ${stats.duplicates.ways.toLocaleString('en-US')}, oracle nodes ${oracle.duplicates.nodes.toLocaleString('en-US')} ways ${oracle.duplicates.ways.toLocaleString('en-US')}`,
+  );
+  // A zero here is a bug, not a clean run: the Central/Northern seam crosses the build area, so
+  // overlapping elements are guaranteed. This is the positive control for the dedupe itself.
+  check(
+    oracle.duplicates.nodes > 0,
+    'the oracle independently sees the seam overlap (control for the dedupe)',
+    `${oracle.duplicates.nodes.toLocaleString('en-US')} duplicate node ids seen by libosmium`,
+  );
+} else {
+  // Deliberately NOT checked in the default mode, and said out loud rather than quietly skipped.
+  // The clip already deduped, so a zero here would be correct and would prove nothing about
+  // whether the dedupe ran. Only `--full` can test that, because only it sees both extracts.
+  console.log('  SKIP  seam dedupe: the written PBF is already deduped. Use --full to test it.');
+  check(
+    oracle.duplicates.nodes === 0,
+    'no duplicate ids survive into the written PBF',
+    `${oracle.duplicates.nodes} duplicate node ids, ${oracle.duplicates.ways} duplicate way ids`,
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Places stage.
@@ -243,18 +284,35 @@ console.log(
   `        ${Object.keys(oracle.roadWays).length.toLocaleString('en-US')} named road ways collapse to ${places.stats.namedRoads.toLocaleString('en-US')} road places across ${ourRoadNames.size.toLocaleString('en-US')} distinct names`,
 );
 
-check(
-  places.stats.withDevanagariName === oracle.withDevanagariName,
-  'Devanagari-named place count agrees',
-  `ours ${places.stats.withDevanagariName}, oracle ${oracle.withDevanagariName}`,
-);
-// Positive control for that count: a zero would also "agree" if both sides dropped every
-// non-Latin name, and the encoding trap on Windows makes that a real failure mode.
-check(
-  oracle.withDevanagariName > 0,
-  'the oracle independently reads Devanagari names (control for the encoding path)',
-  `${oracle.withDevanagariName} names carrying U+0900..U+097F survived the Python to Node hop`,
-);
+// Counted SEPARATELY for roads and non-roads. One road is one place on our side and one entry per
+// way on the oracle's, so a single combined total can never match and comparing them produced a
+// failure that was purely this gate's own arithmetic.
+{
+  let ourNonRoad = 0;
+  const ourRoadDevanagari = new Set<string>();
+  for (const p of places.places) {
+    if (!hasDevanagari(p.name)) continue;
+    if (p.kind === 'highway') ourRoadDevanagari.add(normalise(p.name));
+    else ourNonRoad++;
+  }
+  check(
+    ourNonRoad === oracle.devanagariNonRoad,
+    'Devanagari-named NON-ROAD place count agrees',
+    `ours ${ourNonRoad}, oracle ${oracle.devanagariNonRoad}`,
+  );
+  check(
+    ourRoadDevanagari.size === oracle.devanagariRoadNames,
+    'Devanagari-named distinct ROAD name count agrees',
+    `ours ${ourRoadDevanagari.size}, oracle ${oracle.devanagariRoadNames}`,
+  );
+  // Positive control: a zero on both sides would also "agree" if the encoding path had eaten
+  // every non-Latin name, which on Windows is a real failure mode rather than a hypothetical.
+  check(
+    oracle.devanagariNonRoad + oracle.devanagariRoadNames > 0,
+    'the oracle independently reads Devanagari names (control for the encoding path)',
+    `${oracle.devanagariNonRoad} non-road and ${oracle.devanagariRoadNames} road names carrying U+0900..U+097F survived the Python to Node hop`,
+  );
+}
 
 console.log('');
 if (failures.length > 0) {
