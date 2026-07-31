@@ -18,4 +18,15 @@
   refuses to start.
 - **`/health` serves the full `BuildReport`**, so a running server can always be traced back
   to the extracts and the relation it was built from.
-- **Imports:** `config/`, `shared/`, `engine/`. Never `pipeline/`, never `client/`.
+- **The graph is READ from `data/graph.bin`, never rebuilt here.** The file read lives in this
+  package because this is the layer allowed to touch the filesystem; the parser is
+  `engine/graphfile.ts` and is pure, so the whole loader is testable from a `Uint8Array`. The
+  format is `shared/graphfile.ts`, which both the writer in `pipeline/` and the parser obey.
+  This was a real violation for two gates: the server imported `loadOrBuildClip`, `buildGraph`
+  and `buildTurnTable` and rebuilt the graph at every boot, costing 3.8 s.
+- **The MapLibre style is SERVED from `data/style.json`, never built here.** It is a derivative
+  of the tile schema, which `pipeline/` owns. Building it here made a second copy of that schema
+  and needed a `pipeline/` import; `build-city` now emits it from the same run as the tiles.
+- **Imports:** `config/`, `shared/`, `engine/`. Never `pipeline/`, never `client/`, and never
+  `scripts/`. If the server appears to need something from `pipeline/`, the answer is a new
+  artifact written by `build-city`, not an import.

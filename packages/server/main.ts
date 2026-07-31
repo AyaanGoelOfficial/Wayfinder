@@ -15,31 +15,26 @@
  */
 import Fastify from 'fastify';
 import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { ROUTES } from '../shared/index.ts';
 import type { ApiError, LngLat, RouteResponse } from '../shared/index.ts';
-import { loadOrBuildClip } from '../pipeline/clip/clip.ts';
-import { buildGraph } from '../pipeline/graph/build.ts';
-import { buildTurnTable } from '../pipeline/graph/restrictions.ts';
 import { SnapIndex } from '../engine/snap.ts';
 import { Router } from '../engine/dijkstra.ts';
-import { readLock } from '../../scripts/fetch-extracts.ts';
-import { mapStyle } from '../pipeline/tiles/style.ts';
+import { parseGraphArtifact } from '../engine/graphfile.ts';
 import { BUILD_AREA, SNAP_DESTINATION_M } from '../../config/city.ts';
 
 const DATA = resolve(import.meta.dirname, '../../data');
 const PMTILES = resolve(DATA, 'wayfinder-gn.pmtiles');
+const GRAPH_BIN = resolve(DATA, 'graph.bin');
+const STYLE_JSON = resolve(DATA, 'style.json');
 const PORT = Number(process.env['PORT'] ?? 8080);
 const HOST = process.env['HOST'] ?? '0.0.0.0';
 
 const app = Fastify({ logger: false });
 
-/** Centre of the build area, derived. No hand-picked coordinates, per root CLAUDE.md. */
-const CENTRE: readonly [number, number] = [
-  (BUILD_AREA.minLon + BUILD_AREA.maxLon) / 2,
-  (BUILD_AREA.minLat + BUILD_AREA.maxLat) / 2,
-];
+// The map centre used to be derived here for the style. It moved to `build-city` along with the
+// style itself, and is still derived from BUILD_AREA rather than hand-picked, per root CLAUDE.md.
 
 function artifactsMissing(what: string, how: string): ApiError {
   return {
@@ -70,18 +65,20 @@ app.get('/style.json', async (_req, reply) => {
   } catch {
     return reply.code(503).send(artifactsMissing('wayfinder-gn.pmtiles', 'npm run build-city'));
   }
-  // Same-origin relative path on purpose. The client proxies /tiles to this server, so the
-  // browser sees one origin and the 206 assertion at gate 2 is not confounded by CORS.
-  return reply.header('cache-control', 'no-store').send(
-    mapStyle({
-      pmtilesUrl: '/tiles/wayfinder-gn.pmtiles',
-      center: CENTRE,
-      zoom: 11,
-      // MapLibre substitutes {fontstack} and {range} itself. Our own generated SDF ranges, so
-      // no public glyph endpoint is contacted at any point.
-      glyphsUrl: '/fonts/{fontstack}/{range}.pbf',
-    }),
-  );
+  // SERVED AS AN ARTIFACT, not built here. The style is a derivative of the tile schema, which
+  // the pipeline owns, and this package may not import `pipeline/`. `build-city` emits it from
+  // the same run that emits the tiles, so the two cannot describe different schemas.
+  //
+  // The URLs inside it are same-origin relative on purpose: the client proxies /tiles to this
+  // server, so the browser sees one origin and the 206 assertion at gate 2 is not confounded
+  // by CORS.
+  let style: string;
+  try {
+    style = await readFile(STYLE_JSON, 'utf8');
+  } catch {
+    return reply.code(503).send(artifactsMissing('style.json', 'npm run build-city'));
+  }
+  return reply.header('cache-control', 'no-store').type('application/json').send(style);
 });
 
 /**
@@ -177,27 +174,36 @@ app.get('/tiles/wayfinder-gn.pmtiles', async (req, reply) => {
 });
 
 // ---------------------------------------------------------------------------
-// Routing. The graph is built from the clip cache at boot and held in memory.
+// Routing. The graph is MEMORY-LOADED from an artifact, never rebuilt here.
+//
+// This file used to import `loadOrBuildClip`, `buildGraph` and `buildTurnTable` from `pipeline/`,
+// which `packages/server/CLAUDE.md` forbids, and rebuilt the graph on every boot at a cost of
+// 3.8 s. `build-city` now writes `data/graph.bin` and this reads it. The parser lives in
+// `engine/` and is pure; the file read is here, because the server is the layer allowed to touch
+// the filesystem.
 // ---------------------------------------------------------------------------
 console.log('loading graph...');
 const tLoad = performance.now();
-const lock = await readLock();
-const { clipped } = await loadOrBuildClip(
-  lock.extracts.map((e) => ({ name: e.name, localPath: e.localPath, md5: e.md5 })),
-  resolve(DATA, 'clipped.bin'),
-  () => {},
-);
-const graph = buildGraph(clipped);
-const vertexOfNodeId = new Map<number, number>();
-for (let v = 0; v < graph.vertexNodeId.length; v++) vertexOfNodeId.set(graph.vertexNodeId[v] as number, v);
-const turns = buildTurnTable(graph, clipped.relations, vertexOfNodeId, clipped);
-const snapIndex = new SnapIndex(graph, BUILD_AREA);
-const router = new Router(graph, turns);
+let artifact: ReturnType<typeof parseGraphArtifact>;
+try {
+  artifact = parseGraphArtifact(await readFile(GRAPH_BIN));
+} catch (err) {
+  // Loud and specific. A server that starts cleanly and then fails every /route is much harder
+  // to diagnose than one that refuses to start and names the command that fixes it.
+  console.error(`MISSING OR UNREADABLE ARTIFACT: ${GRAPH_BIN}`);
+  console.error(err instanceof Error ? err.message : String(err));
+  console.error('Run `npm run build-city` first.');
+  process.exit(1);
+}
+const graphStats = artifact.stats.graph as Record<string, number>;
+const restrictionStats = artifact.stats.restrictions as Record<string, number>;
+const snapIndex = new SnapIndex(artifact.graph, BUILD_AREA);
+const router = new Router(artifact.graph, artifact.restrictions);
 console.log(
-  `graph: ${graph.stats.verticesAfterScc.toLocaleString('en-US')} vertices, ` +
-    `${graph.stats.edgesAfterScc.toLocaleString('en-US')} edges, ` +
-    `${turns.stats.enforcedByPair + turns.stats.enforcedBySequence} restrictions enforced, ` +
-    `loaded in ${((performance.now() - tLoad) / 1000).toFixed(1)}s`,
+  `graph: ${(graphStats['verticesAfterScc'] ?? 0).toLocaleString('en-US')} vertices, ` +
+    `${(graphStats['edgesAfterScc'] ?? 0).toLocaleString('en-US')} edges, ` +
+    `${(restrictionStats['enforcedByPair'] ?? 0) + (restrictionStats['enforcedBySequence'] ?? 0)} restrictions enforced, ` +
+    `loaded in ${((performance.now() - tLoad) / 1000).toFixed(2)}s`,
 );
 
 /** Monotonic per process. The client discards anything that is not the latest. Charter item 6. */

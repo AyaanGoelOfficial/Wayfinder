@@ -17,6 +17,7 @@
  * Slow on purpose: it decodes 546 MB of raw extract twice over. It is not part of `npm run gate`.
  */
 import { spawn } from 'node:child_process';
+import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { BUILD_AREA } from '../config/city.ts';
 import { loadOrBuildClip } from '../packages/pipeline/clip/clip.ts';
@@ -118,13 +119,51 @@ function runOracle(paths: readonly string[]): Promise<Oracle> {
 const lock = await readLock();
 const paths = lock.extracts.map((e) => e.localPath);
 
+/**
+ * The oracle pass is CACHED on the extract checksums.
+ *
+ * It decodes 91.5 million nodes, which took 2,877 s the first time it completed. A gate that
+ * expensive gets run once and then avoided, which is the same as not having it. The cache key is
+ * the extract md5s plus a format version, so it invalidates when the data changes or when this
+ * script's output shape changes, and never because time passed.
+ *
+ * Lives in `data/`, which is git-ignored and regenerable by definition. Delete it to force a
+ * fresh pass.
+ */
+const ORACLE_CACHE_VERSION = 1;
+const cachePath = resolve(DATA, 'oracle-places.json');
+const cacheKey = `v${ORACLE_CACHE_VERSION}:${lock.extracts.map((e) => `${e.name}=${e.md5}`).join(',')}`;
+
 console.log('=== places oracle gate ===');
 console.log(`  oracle    pyosmium over ${paths.length} raw extracts, same order as the pipeline`);
-console.log('  this decodes 546 MB of raw extract, so it takes minutes rather than seconds');
 
-const tOracle = performance.now();
-const oracle = await runOracle(paths);
-console.log(`  oracle    read ${oracle.read.nodes.toLocaleString('en-US')} nodes, ${oracle.read.ways.toLocaleString('en-US')} ways, ${oracle.read.relations.toLocaleString('en-US')} relations in ${((performance.now() - tOracle) / 1000).toFixed(0)}s`);
+let oracle: Oracle | null = null;
+try {
+  const cached = JSON.parse(await readFile(cachePath, 'utf8')) as { key: string; oracle: Oracle };
+  if (cached.key === cacheKey) {
+    oracle = cached.oracle;
+    console.log(`  oracle    reusing cached pass, key matches the extract checksums`);
+  } else {
+    console.log('  oracle    cache is stale (extracts changed), running a fresh pass');
+  }
+} catch {
+  console.log('  oracle    no cached pass, running one now');
+}
+
+if (oracle === null) {
+  console.log('  this decodes 546 MB of raw extract. Expect tens of minutes; progress follows.');
+  const tOracle = performance.now();
+  oracle = await runOracle(paths);
+  console.log(
+    `  oracle    read ${oracle.read.nodes.toLocaleString('en-US')} nodes, ${oracle.read.ways.toLocaleString('en-US')} ways, ${oracle.read.relations.toLocaleString('en-US')} relations in ${((performance.now() - tOracle) / 1000).toFixed(0)}s`,
+  );
+  await writeFile(cachePath, JSON.stringify({ key: cacheKey, oracle }), 'utf8');
+  console.log(`  oracle    cached to ${cachePath}`);
+} else {
+  console.log(
+    `  oracle    ${oracle.read.nodes.toLocaleString('en-US')} nodes, ${oracle.read.ways.toLocaleString('en-US')} ways, ${oracle.read.relations.toLocaleString('en-US')} relations (from cache)`,
+  );
+}
 
 const { clipped } = await loadOrBuildClip(
   lock.extracts.map((e) => ({ name: e.name, localPath: e.localPath, md5: e.md5 })),

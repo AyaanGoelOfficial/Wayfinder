@@ -15,10 +15,12 @@ import { loadOrBuildClip, parseClip, clipCacheKey } from './clip/clip.ts';
 import type { ClipExtractInput } from './clip/clip.ts';
 import { buildGraph } from './graph/build.ts';
 import { buildTurnTable } from './graph/restrictions.ts';
+import { serializeGraphArtifact } from './graph/serialize.ts';
 import { writeClipAsPbf } from './clip/pbfwrite.ts';
 import { buildPlaces } from './places/build.ts';
 import { SUPPORTED_SCRIPTS, buildRanges, isSupportedScript, loadFace } from './glyphs/build.ts';
 import { buildTiles } from './tiles/build-tiles.ts';
+import { mapStyle } from './tiles/style.ts';
 import { readLock } from '../../scripts/fetch-extracts.ts';
 
 const DATA = resolve(import.meta.dirname, '../../data');
@@ -237,6 +239,33 @@ await writeFile(
 );
 const placesBytes = (await stat(resolve(DATA, 'places.json'))).size;
 console.log(`  wrote data/places.json  ${mb(placesBytes)}`);
+
+// The routing artifact. Written HERE so the server can memory-load a graph instead of importing
+// `pipeline/` and rebuilding one at boot, which `packages/server/CLAUDE.md` forbids and which
+// cost 3.8 s on every start.
+const graphBytes = serializeGraphArtifact(graph, turns);
+await writeFile(resolve(DATA, 'graph.bin'), graphBytes);
+console.log(`  wrote data/graph.bin    ${mb(graphBytes.byteLength)}`);
+
+// The MapLibre style, for the same reason. It is a derivative of the tile schema, which this
+// package owns, so the server must not import the module that builds it. Written as an artifact
+// and served verbatim, which also keeps the "one source, three derivatives" property: the style
+// and the tiles are emitted by the same build from the same bytes.
+await writeFile(
+  resolve(DATA, 'style.json'),
+  JSON.stringify(
+    mapStyle({
+      pmtilesUrl: '/tiles/wayfinder-gn.pmtiles',
+      center: [(BUILD_AREA.minLon + BUILD_AREA.maxLon) / 2, (BUILD_AREA.minLat + BUILD_AREA.maxLat) / 2],
+      zoom: 11,
+      // MapLibre substitutes {fontstack} and {range} itself. These are our own generated SDF
+      // ranges, so no public glyph endpoint is contacted at any point.
+      glyphsUrl: '/fonts/{fontstack}/{range}.pbf',
+    }),
+  ),
+  'utf8',
+);
+console.log(`  wrote data/style.json`);
 
 // ---- Stage 3c: SDF glyph ranges, generated offline from vendored fonts ----
 console.log('\n--- stage 3c: SDF glyph ranges ---');
