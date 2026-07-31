@@ -236,7 +236,7 @@ export function mapStyle(opts: StyleOptions): unknown {
         minzoom: 12,
         layout: {
           'symbol-placement': 'line',
-          'text-field': ['coalesce', ['get', 'name'], ['get', 'name:en']],
+          'text-field': ['coalesce', ['get', 'name:en'], ['get', 'name']],
           'text-font': ['Noto Sans Regular'],
           'text-size': ['interpolate', ['linear'], ['zoom'], 12, 10, 15, 13],
           'text-letter-spacing': 0.02,
@@ -253,7 +253,7 @@ export function mapStyle(opts: StyleOptions): unknown {
         'source-layer': 'poi',
         minzoom: 15,
         layout: {
-          'text-field': ['coalesce', ['get', 'name'], ['get', 'name:en']],
+          'text-field': ['coalesce', ['get', 'name:en'], ['get', 'name']],
           'text-font': ['Noto Sans Regular'],
           'text-size': 11,
           'text-anchor': 'top',
@@ -279,7 +279,7 @@ export function mapStyle(opts: StyleOptions): unknown {
         source: SRC,
         'source-layer': 'place',
         layout: {
-          'text-field': ['coalesce', ['get', 'name'], ['get', 'name:en']],
+          'text-field': ['coalesce', ['get', 'name:en'], ['get', 'name']],
           'text-font': ['Noto Sans Regular'],
           'text-size': [
             'interpolate', ['linear'], ['zoom'],

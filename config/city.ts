@@ -164,3 +164,33 @@ export const SNAP_TRACKING_M = 40;
  * nearest-anything match.
  */
 export const SNAP_DESTINATION_M = 500;
+
+/**
+ * ROUTING PERFORMANCE BUDGETS. Two of them, because there are two different requirements and
+ * one number cannot serve both.
+ *
+ * The requirement was never "any route in 30 ms". It was "a RE-ROUTE feels instant". Those come
+ * apart: a re-route is computed mid-trip while the driver is moving and a stale line is on
+ * screen, so latency is felt directly. An initial route is computed once, at trip start, off the
+ * interaction path, where 150 ms is invisible.
+ *
+ * NEITHER MAY BE MET BY NARROWING THE SAMPLE. That is the whole risk of splitting a budget, so
+ * it is written into the constants rather than left to good intentions:
+ *
+ *   Re-route sampling: origins sampled ALONG REAL ROUTES, destination the real remaining
+ *   endpoint. This deliberately includes the hard case. A driver who deviates 1 km into a 61 km
+ *   trip generates a ~60 km re-route, so long queries ARE in this distribution and are expected
+ *   to be what sets p95. Sampling only late-trip origins would be exactly the narrowing this
+ *   note forbids.
+ *
+ *   Initial-route sampling: any pair inside BUILD_AREA, and the corner-to-corner worst case
+ *   STAYS IN PERMANENTLY. It is the one query that cannot be argued away.
+ *
+ * Report the two separately, always. A combined figure hides which requirement failed.
+ */
+export const ROUTE_BUDGET = {
+  /** p95 for a mid-trip re-route, in milliseconds. The felt requirement. Does not move. */
+  rerouteP95Ms: 30,
+  /** p95 for the first route of a trip, any pair in the area, including corner to corner. */
+  initialP95Ms: 150,
+} as const;

@@ -26,6 +26,13 @@ Nothing is fetched from a public glyph endpoint, at build time or at runtime.
   nine characters is a bad trade. That line is a stated scope decision, not an oversight.
 - **Urdu is a supported script because it is an additional official language of Uttar Pradesh.**
   Arabic script here is local, not foreign.
+- **DO NOT BUILD A SHAPING PIPELINE.** The limit below is MapLibre's and is not fixable at our
+  layer; an Indic shaper here would be a large, permanent maintenance burden for 26 names out of
+  7,676. The mitigation is to prefer `name:en` for DISPLAY where OSM provides it and fall back to
+  `name` otherwise, which is what the three `text-field` expressions in `tiles/style.ts` do. The
+  local-script name is still INDEXED and still carried in the tiles, so nothing is lost for search
+  or for a future renderer that can shape. Revisit only if a label a real user would read is
+  affected. Evidence stays committed: `verification/gate2-devanagari-*.png`.
 - **KNOWN LIMIT: MapLibre does not shape Indic text.** Devanagari glyphs are drawn in logical
   order without conjunct formation or matra reordering, so a Devanagari label is legible but not
   typographically correct. There is no plugin for this the way there is for RTL.

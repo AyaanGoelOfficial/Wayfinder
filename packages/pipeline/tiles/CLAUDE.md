@@ -36,6 +36,14 @@ emits, and produces `data/wayfinder-gn.pmtiles`.
 - **Peak RSS is read from the OS, not estimated.** tilemaker is a native process, so
   `process.memoryUsage()` in Node says nothing about it. Windows keeps a monotonic
   `PeakWorkingSet64` per process, polled while it runs.
+- **`tilemakerSeconds` IN THE BUILD REPORT IS WALL TIME AND IS CONTAMINATED BY ANYTHING ELSE ON
+  THE MACHINE.** Measured in isolation on this input, tilemaker takes about **18 seconds** for all
+  4,098 tiles: 18.4 s writing to `%TEMP%` and 17.96 s writing into `data/`, so the output location
+  makes no difference and OneDrive is NOT the variable. One recorded build reported **2,425.4 s**
+  for byte-identical output, 132x the isolated cost. That was a contaminated measurement, not a
+  regression, and the contaminating factor was never identified. Never quote a build-report wall
+  time as tilemaker's cost without saying what else was running; re-measure alone if the number
+  matters.
 - **If memory binds, the order is fixed and does not include shrinking `BUILD_AREA`:** smallest
   correct input first (already done, tilemaker sees ~2M nodes not 91.5M), then `--store` on disk
   (already on), then `--shard-stores`. Shrinking the area to make a build pass is loosening the

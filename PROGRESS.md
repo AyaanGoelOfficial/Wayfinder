@@ -13,8 +13,8 @@ Update this in the same change that invalidates a line in it, never as a follow-
 | 1 city build | closed. Graph, places and tiles from one merged, deduped source |
 | 2 map on screen | closed. Own PMTiles, own style, own SDF glyphs, Devanagari confirmed rendering |
 | 3 Dijkstra routing | closed. Route endpoint, client rendering, charter items 1 and 2 measured |
-| 4 OSRM validation | NOT started. `scripts/validate-osrm.ts` does not exist, so `npm run validate` fails |
-| 5 A\* and bidirectional | NOT started. `scripts/bench.ts` does not exist, so `npm run bench` fails |
+| 4 OSRM validation | Tooling built, baseline measured, **FAILS**. Distance median 3.39% against 3%, p95 17.90% against 7%. See `VALIDATION.md` |
+| 5 A\* and bidirectional | Tooling built, baseline measured, both budgets **missed**. Re-route p95 359.50 ms against 30 ms; initial p95 386.24 ms against 150 ms. See `BENCHMARKS.md`. Algorithms NOT started |
 | 6 legality pass | NOT started. The U-turn penalty is specified in `DESIGN.md` and lands here |
 | 7 search and turn-by-turn | NOT started. Places index and fuzzy search exist; instructions do not |
 | 8 tracking | NOT started. Must not start before the U-turn penalty lands |
@@ -34,9 +34,20 @@ Update this in the same change that invalidates a line in it, never as a follow-
   largest-SCC filtering, from 1,893,860 deduped in-area nodes. That is an order of magnitude
   below the ~10^6 feared. CH still gets decided at gate 5 on measured p95 route compute under
   30 ms, not on this count, but nothing about this scale suggests it will be needed.
-- **Routing is about 8x short of the gate 5 budget.** Cross-city sits near 230 ms against a 30 ms
-  p95 target, after three constant-factor fixes. The remaining cost looks memory-bound. Measured
-  numbers and the untried levers are in `DESIGN.md`.
+- **Both routing budgets are missed, measured properly.** Re-route p95 **359.50 ms** against 30 ms;
+  initial-route p95 **386.24 ms** against 150 ms. Re-route p50 is 43.72 ms, so the distribution is
+  easier on average and its p95 is set by early-trip long re-routes, which are in the sample on
+  purpose. `npm run bench`, `BENCHMARKS.md`.
+- **Gate 4 divergence from OSRM exceeds the threshold, in BOTH directions.** Worst cases run from
+  +37.5% (we are 12 km longer) to -37.5% (we are 24 km shorter). Longer suggests a missing road or
+  over-restriction; shorter suggests we permit something OSRM does not, which is the more serious
+  reading. One landmark pair, `gautam-buddha-university to jewar`, is +37.49% and sits well inside
+  the area, so it carries no near-boundary excuse. Not yet investigated.
+- **tilemaker wall time in the build report is contaminated by concurrent load.** Isolated it takes
+  about **18 s**, measured twice (18.4 s to `%TEMP%`, 17.96 s into `data/`), so output location and
+  OneDrive are ruled out. One recorded build said 2,425.4 s for byte-identical output, 132x. The
+  contaminating factor was never identified. Never quote a build-report wall time without saying
+  what else was running.
 - **There is no U-turn prohibition.** Measured at 0 occurrences across 92 km of real routes, with
   controls proving the U-turn was offered and lost on cost. The fix is a PENALTY, specified in
   `DESIGN.md`, and it must land before gate 8.
