@@ -75,6 +75,15 @@ npm run gate:copy        # em dash / en dash / interpunct scan of user-facing st
 npm run gate             # all three
 ```
 
+Cross-checks that need the built artifacts, so they are NOT part of `npm run gate`:
+
+```bash
+npm run gate:fixtures    # frozen routing + search fixtures, held-out queries, restriction enforcement
+npm run gate:oracle      # places index vs pyosmium. ~6 min, cached on the extract md5s
+npm run gate:oracle -- --full   # ALSO re-derives the clip from raw extracts. Hours. Never yet run to completion
+npm run profile:route    # settled/relaxed counts beside wall time, for the gate 5 ladder
+```
+
 Measurement and acceptance:
 
 ```bash
@@ -209,23 +218,10 @@ A fresh clone runs: `npm install`, `npm run setup:tools`, `npm run fetch:extract
 
 ## Known weaknesses / not-yet-done
 
-- **The places index does not exist yet.** Gate 1 produced the graph and the tiles; search is
-  gate 7. Kasna stays a search fixture until then.
-- **Graph scale is MEASURED and small: 213,144 vertices, 532,951 directed edges** after
-  largest-SCC filtering, from 1,893,860 deduped in-area nodes. That is an order of magnitude
-  below the ~10^6 feared. CH still gets decided at gate 5 on measured p95 route compute under
-  30 ms, not on this count, but nothing about this scale suggests it will be needed.
-- **Speeds are ESTIMATES, not measurements.** Only 1,773 of 121,084 drivable ways carry a
-  parseable `maxspeed`; the other 98.5% use the class-default table. Gate 6 divergence from OSRM
-  will come mostly from here and from highway classification, not from turn restrictions.
-- **Turn restrictions are sparse: 55 in the build area**, of which 40 resolve to 40 banned turn
-  pairs. 12 are via-way, which is unsupported, and 3 have unusable roles. Budget gate 6
-  investigation accordingly.
-- **`osm-pbf-parser` is 3.5 years stale** and predates Node 24. Verified to exist, not
-  verified to run. Fallback is hand-rolled protobuf decode over `pbf` plus zlib.
-- **Kasna is not a mapped place.** Verified against raw OSM: zero `place=*` under any
-  spelling; only `Old Kasana Road` and `Kasana Nursing Home`, both spelled Kasana. It is
-  kept as a search fixture on purpose, to test fuzzy matching and road indexing.
+**Moved to `PROGRESS.md`** when this file reached the 250-line cap in `hard-rules.md`. Nothing was
+deleted. That file holds gate status and every measured weakness: places index state and its
+oracle, routing latency against the gate 5 budget, the missing U-turn penalty, speed estimates,
+sparse turn restrictions, and the Indic shaping limit.
 
 ---
 

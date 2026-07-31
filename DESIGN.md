@@ -257,7 +257,7 @@ on p95 after the ladder is built, not before.
 
 ---
 
-## Deviation, open: the server imports `pipeline/`. Introduced at gate 2, still unfixed.
+## Deviation, CLOSED: the server no longer imports `pipeline/`. Fixed after gate 3.
 
 `packages/server/CLAUDE.md` says the server may import `config/`, `shared/` and `engine/`, and
 never `pipeline/`. It currently imports `loadOrBuildClip`, `buildGraph` and `buildTurnTable`
@@ -268,11 +268,18 @@ and it is recorded here so it cannot be quietly inherited.
 way to hold a routable graph at boot is to rebuild it from the clip cache. That also costs the
 server a 3.8 s boot.
 
-**The fix:** `build-city` writes the graph and turn table as flat binary artifacts, and the
-server memory-loads them like it already does for `.pmtiles`. That deletes every `pipeline/`
-import and the boot rebuild together. It is a pipeline artifact-format change, so it gets its
-own commit rather than riding along with gate 3, and it must land before gate 4 so validation
-runs against loaded artifacts rather than a rebuild.
+**The fix, now shipped:** `build-city` writes `data/graph.bin` (35 MB) and `data/style.json`, and
+the server memory-loads both. The format is stated once in `shared/graphfile.ts`, because the
+writer is in `pipeline/` and the parser in `engine/` and neither may import the other. Every array
+is a zero-copy subarray view, which is why the writer orders sections widest-alignment-first.
+
+**Measured, on an idle machine:** boot fell from **3.8 s rebuilding to 2.87 s loading**, and a
+route returns byte-identical results (`distanceM 8413.272094997856`, `cost 989.8245660657711`,
+before and after). An intermediate measurement of 89.36 s was taken while `build-city` was running
+tilemaker on the same machine and is contention, not the artifact path; it is recorded here
+because a number that large is worth explaining rather than quietly dropping.
+
+`grep` for `pipeline/` imports under `packages/server/` now returns nothing.
 
 ---
 
