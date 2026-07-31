@@ -27,9 +27,11 @@ Update this in the same change that invalidates a line in it, never as a follow-
   35 entries lying outside `BUILD_AREA`, including a fort in Delhi, because the clip carries
   out-of-area nodes for way completeness and those nodes arrive with their tags. Fixed. Search
   ranking itself is still gate 7.
-- **The oracle's `--full` layer has NEVER been run to completion.** The default layer reads our own
-  written PBF, so it cannot see an element the clip wrongly DROPPED. Closing that gap needs 91.5M
-  Python callbacks at roughly 6,200 objects per second, about four hours.
+- **The oracle's `--full` layer HAS been run to completion and passes.** 100,532,247 objects in
+  993 s on an idle machine. Clip selection from the raw extracts agrees exactly: 1,893,860 in-area
+  nodes, 334,496 kept ways, 2,354 kept relations, and seam duplicates of 74,519 nodes and 8,560
+  ways. That last one is the check nothing else can make, and it is the independent proof that the
+  Central/Northern dedupe runs and is correct. The clip stage is no longer an unvalidated step.
 - **Graph scale is MEASURED and small: 213,144 vertices, 532,951 directed edges** after
   largest-SCC filtering, from 1,893,860 deduped in-area nodes. That is an order of magnitude
   below the ~10^6 feared. CH still gets decided at gate 5 on measured p95 route compute under

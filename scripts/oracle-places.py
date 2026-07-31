@@ -122,16 +122,19 @@ def keep_relation(tags):
 class Collector:
     """Driven by `osmium.FileProcessor`, NOT by `osmium.SimpleHandler`.
 
-    Throughput, measured on this machine, and read carefully because the two numbers describe
-    different things: a BARE FileProcessor loop that does nothing per object sustains about
-    104,000 objects per second, while this handler, which bounds-checks every node and maintains
-    the id sets, runs at roughly 16,000 per second. The first figure says nothing about this
-    workload and is recorded only so nobody re-derives it and expects the second.
+    THROUGHPUT, and a warning about how it was previously mis-measured.
 
-    A SimpleHandler version of this same script completed the 91.5M-object raw pair in 2,877 s,
-    about 32,000 objects per second. It ALSO failed to finish the 13.8 MB clipped file inside a
-    300 s limit, which that rate says it should have cleared in roughly 70 s. That discrepancy is
-    NOT diagnosed and is not claimed to be understood. The switch was made because the supported
+    Measured ALONE on an idle machine, this handler processed the full raw pair, 100,532,247
+    objects, in 993 s: about **101,000 objects per second**. Earlier figures of 6,200 and 16,000
+    per second were taken while other work ran on the same machine and were wrong by more than an
+    order of magnitude. This project has now been bitten by load-contaminated wall clock three
+    times: a server boot recorded at 89 s that is 2.87 s alone, a tilemaker run at 2,425 s that is
+    18 s alone, and this. Measure alone or do not quote the number.
+
+    A SimpleHandler version of this same script completed the same input in 2,877 s. That was also
+    measured under load, so it is NOT evidence that SimpleHandler is slower. It additionally failed
+    to finish the 13.8 MB clipped file inside a 300 s limit, which no rate here explains. That
+    discrepancy is NOT diagnosed. The switch to FileProcessor was made because the supported
     iteration API allows progress reporting, not on a proven speed argument.
 
     Progress goes to stderr on purpose: a silent long job and a hung one look identical from the
