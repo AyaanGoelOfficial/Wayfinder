@@ -249,3 +249,89 @@ describe('dijkstra: via-node restrictions', () => {
     expect(turns.stats.notHonoured).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Charter item 1, asserted DIRECTLY on the geometry rather than inferred from a picture.
+//
+// The on-road browser check ("every route point lands on a rendered road") is an integration
+// test: it can only fail once tiles, style and renderer all agree, and it proves fidelity
+// indirectly. This proves it at the source. If simplification ever creeps into the wrong layer,
+// or an edge is ever emitted as a straight chord between its endpoints, this fails immediately
+// and names the way.
+// ---------------------------------------------------------------------------
+describe('charter item 1: route geometry reproduces the OSM shape exactly', () => {
+  // One way, deliberately curved, with SEVEN intermediate shape points between its endpoints.
+  // Intermediate points are not vertices, so they exist only in packed edge geometry, which is
+  // precisely the thing that gets lost if anything simplifies.
+  const CURVE_NODES: N[] = [
+    { id: 1, lat: 28.5000, lon: 77.5000 },
+    { id: 2, lat: 28.5004, lon: 77.5003 },
+    { id: 3, lat: 28.5009, lon: 77.5004 },
+    { id: 4, lat: 28.5013, lon: 77.5002 },
+    { id: 5, lat: 28.5015, lon: 77.4998 },
+    { id: 6, lat: 28.5014, lon: 77.4993 },
+    { id: 7, lat: 28.5010, lon: 77.4990 },
+    { id: 8, lat: 28.5005, lon: 77.4991 },
+    { id: 9, lat: 28.5001, lon: 77.4995 },
+  ];
+  const CURVE_WAYS: W[] = [
+    { id: 900, refs: [1, 2, 3, 4, 5, 6, 7, 8, 9], tags: { highway: 'residential' } },
+  ];
+
+  it('emits every intermediate shape point, in order, with none dropped', () => {
+    const { graph, router, vertexOfNodeId } = build(CURVE_NODES, CURVE_WAYS);
+    const e = edgeOf(graph, vertexOfNodeId, 900, 1, 9);
+    // Fractions 0 and 1: the whole edge, so the geometry must be the whole way.
+    const r = router.route(e, 0, e, 1);
+    expect(r).not.toBeNull();
+
+    const expected = CURVE_NODES.map((n) => [n.lon, n.lat]);
+    const got = (r?.geometry ?? []).map((p) => [p[0], p[1]]);
+    // Round-trip through the 1e7 scaled integer store costs at most half a unit in the last
+    // place, so exactness is asserted at that resolution rather than on the raw float.
+    expect(got.length).toBe(expected.length);
+    for (let i = 0; i < expected.length; i++) {
+      expect(Math.round((got[i] as number[])[0]! * 1e7)).toBe(Math.round((expected[i] as number[])[0]! * 1e7));
+      expect(Math.round((got[i] as number[])[1]! * 1e7)).toBe(Math.round((expected[i] as number[])[1]! * 1e7));
+    }
+  });
+
+  it('NEGATIVE CONTROL: the straight chord between the endpoints is NOT what is returned', () => {
+    // Without this control the assertion above would still pass on a 2-point chord if the
+    // expected list were ever reduced to endpoints by an editing mistake. This pins the fact
+    // that the way is genuinely curved, so a chord is a materially different answer.
+    const { graph, router, vertexOfNodeId } = build(CURVE_NODES, CURVE_WAYS);
+    const e = edgeOf(graph, vertexOfNodeId, 900, 1, 9);
+    const r = router.route(e, 0, e, 1);
+    expect(r?.geometry.length).toBeGreaterThan(2);
+
+    // The polyline must be materially longer than the endpoint-to-endpoint chord. A chord would
+    // make these equal; a simplified line would shrink the ratio toward 1.
+    const geom = r?.geometry ?? [];
+    const seg = (a: readonly number[], b: readonly number[]): number =>
+      Math.hypot((b[0]! - a[0]!) * Math.cos((28.5 * Math.PI) / 180), b[1]! - a[1]!);
+    let along = 0;
+    for (let i = 0; i + 1 < geom.length; i++) along += seg(geom[i]!, geom[i + 1]!);
+    const chord = seg(geom[0]!, geom[geom.length - 1]!);
+    expect(along / chord).toBeGreaterThan(3);
+  });
+
+  it('a partial traversal keeps every interior shape point between the two cut ends', () => {
+    // Clipping to a snapped start and end must trim only the ends. Dropping interior points
+    // while trimming is the subtle version of the same defect and would not show up above.
+    const { graph, router, vertexOfNodeId } = build(CURVE_NODES, CURVE_WAYS);
+    const e = edgeOf(graph, vertexOfNodeId, 900, 1, 9);
+    const r = router.route(e, 0.1, e, 0.9);
+    const geom = r?.geometry ?? [];
+    // Interior points are those strictly between the clipped ends. Nodes 2..8 span roughly the
+    // middle of the way, so at least the central ones must survive a 10 percent trim.
+    const interior = CURVE_NODES.slice(2, 7).map((n) => [
+      Math.round(n.lon * 1e7),
+      Math.round(n.lat * 1e7),
+    ]);
+    const present = new Set(geom.map((p) => `${Math.round(p[0] * 1e7)},${Math.round(p[1] * 1e7)}`));
+    for (const [lon, lat] of interior) {
+      expect(present.has(`${lon},${lat}`)).toBe(true);
+    }
+  });
+});

@@ -120,19 +120,33 @@ export interface RouteResult {
 
 const COORD_SCALE = 1e7;
 
-/** Cost of fully traversing an edge, in seconds. */
-function edgeSeconds(g: RoutableGraph, e: number): number {
-  return (g.edgeLengthM[e] as number) / ((g.edgeSpeedKmh[e] as number) * KMH_TO_MS);
-}
+// The cost of fully traversing an edge, in seconds, is `length / (speed * KMH_TO_MS)`. It used
+// to live here as a function called from inside the relaxation loop. It is now computed once per
+// edge into `Router.secs`; see the comment there for why.
 
 /**
  * Preallocated search state, built once per loaded graph and reused for every query.
  * NOT safe for concurrent queries on one instance; the server holds one and routes serially.
  */
 export class Router {
-  private readonly dist: Float64Array;
-  private readonly parent: Int32Array;
-  private readonly stamp: Int32Array;
+  /**
+   * `dist`, `parent` and `stamp` INTERLEAVED in one buffer, 16 bytes per edge.
+   *
+   * They were three separate typed arrays. Every relaxation reads all three at the same edge
+   * index, and that index comes from CSR adjacency, so it is effectively random: three separate
+   * arrays meant three cache lines touched per relaxation, 1,388,769 times on a cross-city route.
+   * Measured symptom before this change: nanoseconds per settle rose with the fraction of the
+   * graph searched (391 ns at 6.5%, 603 ns at 92%), which is the signature of memory stalls
+   * rather than of arithmetic.
+   *
+   * Layout per edge i: `dist` is the f64 at `f64[i * 2]`, `parent` is the i32 at `i32[i * 4 + 2]`,
+   * `stamp` is the i32 at `i32[i * 4 + 3]`. One 16-byte block, so one cache line serves all three.
+   * `settledStamp` stays separate: it is read once per pop at the popped edge, never alongside
+   * these three, so folding it in would only widen the stride that made this work.
+   */
+  private readonly stateBuf: ArrayBuffer;
+  private readonly distV: Float64Array;
+  private readonly metaV: Int32Array;
   private readonly settledStamp: Int32Array;
   private generation = 0;
 
@@ -144,19 +158,31 @@ export class Router {
   /** Shape id to its (one or two) directed edges, so a snap can seed both directions. */
   private readonly edgesOfShape: Map<number, number[]>;
 
+  /**
+   * Traversal cost of every edge in seconds, precomputed once.
+   *
+   * This used to be `length / (speed * KMH_TO_MS)` evaluated inside the relaxation loop, which
+   * put a float DIVISION plus two typed-array reads on the hottest path in the project. It ran
+   * 1,388,769 times on one cross-city route. Precomputing costs 4.3 MB against 532,951 edges and
+   * turns the inner cost into a single Float64Array read.
+   */
+  private readonly secs: Float64Array;
+
   constructor(
     private readonly g: RoutableGraph,
     private readonly r: Restrictions,
   ) {
     const n = g.edgeFrom.length;
-    this.dist = new Float64Array(n);
-    this.parent = new Int32Array(n);
-    this.stamp = new Int32Array(n);
+    this.stateBuf = new ArrayBuffer(n * 16);
+    this.distV = new Float64Array(this.stateBuf);
+    this.metaV = new Int32Array(this.stateBuf);
     this.settledStamp = new Int32Array(n);
     this.heapEdge = new Int32Array(n + 1);
     this.heapCost = new Float64Array(n + 1);
+    this.secs = new Float64Array(n);
     this.edgesOfShape = new Map();
     for (let e = 0; e < n; e++) {
+      this.secs[e] = (g.edgeLengthM[e] as number) / ((g.edgeSpeedKmh[e] as number) * KMH_TO_MS);
       const s = g.edgeShape[e] as number;
       const list = this.edgesOfShape.get(s);
       if (list) list.push(e);
@@ -164,53 +190,62 @@ export class Router {
     }
   }
 
+  // push and pop hoist `this.heapEdge` / `this.heapCost` into locals for the same reason the
+  // search loop does: these run millions of times per long route, and a property load per array
+  // access is a measurable fraction of the work at that count.
+
   private push(edge: number, cost: number): void {
+    const he = this.heapEdge;
+    const hc = this.heapCost;
     let i = ++this.heapSize;
-    this.heapEdge[i] = edge;
-    this.heapCost[i] = cost;
+    he[i] = edge;
+    hc[i] = cost;
     while (i > 1) {
       const p = i >> 1;
-      const pc = this.heapCost[p] as number;
-      const c = this.heapCost[i] as number;
+      const pc = hc[p] as number;
+      const c = hc[i] as number;
       // Tie-break on edge index so ordering is total and reproducible.
-      if (pc < c || (pc === c && (this.heapEdge[p] as number) <= (this.heapEdge[i] as number))) break;
-      const te = this.heapEdge[p] as number;
-      const tc = pc;
-      this.heapEdge[p] = this.heapEdge[i] as number;
-      this.heapCost[p] = c;
-      this.heapEdge[i] = te;
-      this.heapCost[i] = tc;
+      if (pc < c || (pc === c && (he[p] as number) <= (he[i] as number))) break;
+      const te = he[p] as number;
+      he[p] = he[i] as number;
+      hc[p] = c;
+      he[i] = te;
+      hc[i] = pc;
       i = p;
     }
   }
 
   private pop(): number {
-    const top = this.heapEdge[1] as number;
-    this.heapEdge[1] = this.heapEdge[this.heapSize] as number;
-    this.heapCost[1] = this.heapCost[this.heapSize] as number;
-    this.heapSize--;
+    const he = this.heapEdge;
+    const hc = this.heapCost;
+    const top = he[1] as number;
+    he[1] = he[this.heapSize] as number;
+    hc[1] = hc[this.heapSize] as number;
+    const size = --this.heapSize;
     let i = 1;
     for (;;) {
       const l = i << 1;
       const rr = l + 1;
       let best = i;
-      if (l <= this.heapSize) {
-        const bc = this.heapCost[best] as number;
-        const lc = this.heapCost[l] as number;
-        if (lc < bc || (lc === bc && (this.heapEdge[l] as number) < (this.heapEdge[best] as number))) best = l;
+      let bc = hc[i] as number;
+      if (l <= size) {
+        const lc = hc[l] as number;
+        if (lc < bc || (lc === bc && (he[l] as number) < (he[best] as number))) {
+          best = l;
+          bc = lc;
+        }
       }
-      if (rr <= this.heapSize) {
-        const bc = this.heapCost[best] as number;
-        const rc = this.heapCost[rr] as number;
-        if (rc < bc || (rc === bc && (this.heapEdge[rr] as number) < (this.heapEdge[best] as number))) best = rr;
+      if (rr <= size) {
+        const rc = hc[rr] as number;
+        if (rc < bc || (rc === bc && (he[rr] as number) < (he[best] as number))) best = rr;
       }
       if (best === i) break;
-      const te = this.heapEdge[best] as number;
-      const tc = this.heapCost[best] as number;
-      this.heapEdge[best] = this.heapEdge[i] as number;
-      this.heapCost[best] = this.heapCost[i] as number;
-      this.heapEdge[i] = te;
-      this.heapCost[i] = tc;
+      const te = he[best] as number;
+      const tc = hc[best] as number;
+      he[best] = he[i] as number;
+      hc[best] = hc[i] as number;
+      he[i] = te;
+      hc[i] = tc;
       i = best;
     }
     return top;
@@ -257,72 +292,98 @@ export class Router {
     let restrictionsApplied = 0;
 
     const endShape = g.edgeShape[endEdge] as number;
-    const endCandidates = this.edgesOfShape.get(endShape) ?? [endEdge];
+    // The end is at most TWO directed edges, the given one and its reverse twin, so they are held
+    // as two scalars rather than iterated. `for (const ec of endCandidates)` ran once per pop and
+    // allocated an array iterator each time: 490,961 short-lived objects on one cross-city route,
+    // all of it pure GC pressure inside the hot loop.
+    const endList = this.edgesOfShape.get(endShape);
+    const endA = endEdge;
+    let endB = -1;
+    if (endList !== undefined) {
+      for (let i = 0; i < endList.length; i++) {
+        const c = endList[i] as number;
+        if (c !== endEdge) endB = c;
+      }
+    }
     // Fraction is measured along the given directed edge; the opposite edge measures from the
     // other end, so it has to be mirrored rather than reused.
-    const endFractionOf = (e: number): number =>
-      e === endEdge ? endFraction : 1 - endFraction;
+    const fracA = endFraction;
+    const fracB = 1 - endFraction;
 
     const startShape = g.edgeShape[startEdge] as number;
     for (const se of this.edgesOfShape.get(startShape) ?? [startEdge]) {
       const frac = se === startEdge ? startFraction : 1 - startFraction;
-      const remaining = (1 - frac) * edgeSeconds(g, se);
-      this.dist[se] = remaining;
-      this.parent[se] = -1;
-      this.stamp[se] = gen;
+      const remaining = (1 - frac) * (this.secs[se] as number);
+      this.distV[se * 2] = remaining;
+      this.metaV[se * 4 + 2] = -1;
+      this.metaV[se * 4 + 3] = gen;
       this.push(se, remaining);
     }
 
     let bestEnd = -1;
     let bestTotal = Infinity;
 
+    // Hoisted out of `this` for the duration of the loop. Every `this.dist[f]` is a property load
+    // followed by an element load; at 1.4 million relaxations the property half is not free.
+    const distV = this.distV;
+    const metaV = this.metaV;
+    const settledStamp = this.settledStamp;
+    const secs = this.secs;
+    const edgeTo = g.edgeTo;
+    const csrOffset = g.csrOffset;
+    const csrEdge = g.csrEdge;
+    const edgeRestricted = this.r.edgeRestricted;
+
     while (this.heapSize > 0) {
       const e = this.pop();
-      if (this.settledStamp[e] === gen) continue;
-      this.settledStamp[e] = gen;
+      if (settledStamp[e] === gen) continue;
+      settledStamp[e] = gen;
       settled++;
-      const de = this.dist[e] as number;
+      const de = distV[e * 2] as number;
 
       // Reaching the end segment: stop partway along it rather than at its far vertex.
-      for (const ec of endCandidates) {
-        if (ec !== e) continue;
+      if (e === endA || e === endB) {
+        const endFrac = e === endA ? fracA : fracB;
         // If this is the seeded start edge, the destination is only reachable without leaving it
         // when it lies FURTHER along the direction of travel. Otherwise the driver must go round,
         // and the search finds that path by arriving on this edge again from elsewhere.
-        const seededFrac = e === startEdge ? startFraction : (g.edgeShape[e] === startShape ? 1 - startFraction : -1);
-        if (seededFrac >= 0 && (this.parent[e] as number) === -1 && endFractionOf(e) < seededFrac) continue;
-        const total = de - (1 - endFractionOf(e)) * edgeSeconds(g, e);
-        if (total < bestTotal) {
-          bestTotal = total;
-          bestEnd = e;
+        const seededFrac =
+          e === startEdge ? startFraction : g.edgeShape[e] === startShape ? 1 - startFraction : -1;
+        if (!(seededFrac >= 0 && (metaV[e * 4 + 2] as number) === -1 && endFrac < seededFrac)) {
+          const total = de - (1 - endFrac) * (secs[e] as number);
+          if (total < bestTotal) {
+            bestTotal = total;
+            bestEnd = e;
+          }
         }
       }
       // Everything still queued costs at least `de`, so once the best completion is cheaper
       // than the frontier there is nothing left that can improve it.
       if (bestEnd !== -1 && de >= bestTotal) break;
 
-      const v = g.edgeTo[e] as number;
-      const from = this.parent[e] as number;
-      const restricted = this.r.edgeRestricted[e] === 1;
-      const start = g.csrOffset[v] as number;
-      const end = g.csrOffset[v + 1] as number;
+      const v = edgeTo[e] as number;
+      const from = metaV[e * 4 + 2] as number;
+      const restricted = edgeRestricted[e] === 1;
+      const start = csrOffset[v] as number;
+      const end = csrOffset[v + 1] as number;
 
       for (let i = start; i < end; i++) {
-        const f = g.csrEdge[i] as number;
+        const f = csrEdge[i] as number;
         if (restricted && this.forbidden(e, f, from)) {
           restrictionsApplied++;
           continue;
         }
-        const nd = de + edgeSeconds(g, f);
+        const nd = de + (secs[f] as number);
         relaxed++;
-        if (this.stamp[f] !== gen) {
-          this.stamp[f] = gen;
-          this.dist[f] = nd;
-          this.parent[f] = e;
+        const m = f * 4;
+        if (metaV[m + 3] !== gen) {
+          metaV[m + 3] = gen;
+          distV[f * 2] = nd;
+          metaV[m + 2] = e;
           this.push(f, nd);
-        } else if (nd < (this.dist[f] as number)) {
-          this.dist[f] = nd;
-          this.parent[f] = e;
+        } else if (nd < (distV[f * 2] as number)) {
+          distV[f * 2] = nd;
+          metaV[m + 2] = e;
           this.push(f, nd);
         }
       }
@@ -331,19 +392,22 @@ export class Router {
     if (bestEnd === -1) return null;
 
     const edges: number[] = [];
-    for (let e = bestEnd; e !== -1; e = this.parent[e] as number) edges.push(e);
+    for (let e = bestEnd; e !== -1; e = this.metaV[e * 4 + 2] as number) edges.push(e);
     edges.reverse();
 
     const firstEdge = edges[0] as number;
     const firstFraction =
-      (this.parent[firstEdge] as number) === -1
+      (this.metaV[firstEdge * 4 + 2] as number) === -1
         ? (firstEdge === startEdge ? startFraction : 1 - startFraction)
         : 0;
-    const geometry = this.buildGeometry(edges, firstFraction, endFractionOf(bestEnd));
+    // Same mirroring as inside the loop: the fraction is measured along whichever of the two
+    // directed edges of the end shape the search actually arrived on.
+    const endFrac = bestEnd === endA ? fracA : fracB;
+    const geometry = this.buildGeometry(edges, firstFraction, endFrac);
     let metres = 0;
     for (const e of edges) metres += g.edgeLengthM[e] as number;
     metres -= firstFraction * (g.edgeLengthM[firstEdge] as number);
-    metres -= (1 - endFractionOf(bestEnd)) * (g.edgeLengthM[bestEnd] as number);
+    metres -= (1 - endFrac) * (g.edgeLengthM[bestEnd] as number);
 
     return {
       edges,

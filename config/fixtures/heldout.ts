@@ -58,4 +58,50 @@ export const HELD_OUT_QUERIES: readonly HeldOutQuery[] = [
   { query: 'Ecotech', rationale: 'The industrial sector series. Tests a prefix shared by many features.', mustResolve: false },
   { query: 'Pari Chok', rationale: 'MISSPELLING of Pari Chowk, the kind a phone keyboard produces.', mustResolve: true },
   { query: 'Nolej Park', rationale: 'PHONETIC misspelling of Knowledge Park. Harder than a one-character typo.', mustResolve: false },
+
+  // ---------------------------------------------------------------------------
+  // SECOND BATCH. The first ten left only four queries load-bearing, because six turned out to
+  // name things OSM does not carry and were correctly marked `mustResolve: false`. A held-out set
+  // where six of ten pass by returning nothing is not a generalisation check, it is four queries
+  // wearing a coat. These were written from prior knowledge of Gautam Buddha Nagar BEFORE running
+  // any of them, for the same reason as the first batch.
+  //
+  // `mustResolve` here is a claim about the WORLD: settlements and major institutions in this
+  // district are well covered by OSM. If one fails, the question is whether the feature is absent
+  // from the data or the ranking buried it, and that is settled with a positive control, never by
+  // flipping the flag to make the gate green.
+  // ---------------------------------------------------------------------------
+  {
+    query: 'Bisrakh',
+    rationale: 'Village in Greater Noida West, locally famous and widely used as a destination.',
+    // Resolves, but NOT to the village: the only two indexed names containing "Bisrakh" are
+    // "BISRAKH FCS" as a fuel station and as a charging station, at 77.4450,28.5746. That is the
+    // right LOCATION, so a driver typing this is sent to the right place by an accident of what
+    // OSM carries. The village itself is not indexed as a `place=*` under this spelling.
+    // Control: the substring scan over all 7,676 indexed names returns exactly those two.
+    osmReality: 'no place=* named Bisrakh; only BISRAKH FCS (fuel and charging) at the village location',
+    mustResolve: true,
+  },
+  { query: 'Dankaur', rationale: 'Town on the southern side of the district, on the way to Jewar.', mustResolve: true },
+  { query: 'Rabupura', rationale: 'Town near the Yamuna Expressway. Tests coverage away from the urban core.', mustResolve: true },
+  { query: 'Chhapraula', rationale: 'Village on the western edge, near the Ghaziabad boundary.', mustResolve: true },
+  { query: 'Bennett University', rationale: 'A third university in the area, distinct from Sharda and Galgotias.', mustResolve: true },
+  {
+    query: 'Grand Venice',
+    rationale: 'A large mall people name by two words, never in full.',
+    // mustResolve was TRUE and it FAILED. Corrected only after a positive control settled that
+    // this is a data absence rather than a ranking failure: zero of the 7,676 indexed names
+    // contain "Venice", while "Grand" returns 8 (Grand Trunk Road, Pearl Grand, Mona Grand Hotel
+    // and others), so multi-word and substring matching demonstrably work. The mall is simply not
+    // in this extract. Corrected about the WORLD, not loosened to make the gate pass.
+    osmReality: 'no indexed name contains "Venice"; control: "Grand" matches 8 names',
+    mustResolve: false,
+  },
+  { query: 'Eastern Peripheral Expressway', rationale: 'The other motorway through the district. A long multi-word road name.', mustResolve: true },
+  { query: 'Buddh International Circuit', rationale: 'The motor racing circuit. A prominent named feature with no settlement nearby.', mustResolve: true },
+  { query: 'Ek Murti', rationale: 'A well known roundabout. Junctions are often unnamed in OSM, so this may legitimately return nothing.', osmReality: 'confirmed absent: zero indexed names contain "Murti"', mustResolve: false },
+  // Marked uncertain and it resolved anyway, to amenity/aerodrome. Left as `may`: the flag records
+  // what was known when it was written, and raising it now on one lucky pass is how a held-out set
+  // quietly becomes tuning data.
+  { query: 'Noida International Airport', rationale: 'The Jewar airport. Under construction, so its tagging and naming are genuinely uncertain.', mustResolve: false },
 ];

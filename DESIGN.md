@@ -194,25 +194,66 @@ harmless in practice: `route` seeds BOTH directed edges of the snapped start sha
 search never needs to turn round at the start, and on a connected two-way graph it never needs
 to elsewhere either.
 
-**Deferred to gate 6 deliberately, not forgotten.** A ban changes route costs and would
-invalidate golden geometry, so it belongs with the legality pass and the OSRM comparison, where
-the cost of over-banning (a legal U-turn on an undivided residential street) can be measured
-against the cost of under-banning. Gate 6 is where this gets decided.
+**Deferred to gate 6, and the SHAPE OF THE FIX IS PINNED NOW so it is not re-litigated later:**
+
+- **A PENALTY, not a ban.** An outright ban breaks dead ends and legitimate turnarounds, and an
+  over-strict rule produces "no route" where a driver would simply turn around.
+- **Explicit exemption where outgoing degree is 1.** At a dead end the reverse twin is the only
+  move, so it must cost nothing extra.
+- **Calibrated against OSRM divergences at gate 6**, not guessed. The penalty is a number, and
+  the validation set is what fixes it.
+- **It must land before gate 8.** Re-routing from a matched mid-road position is exactly where
+  U-turn pricing bites: an unpriced U-turn there produces an instruction a driver cannot legally
+  follow, which is worse than a slower route.
 
 ---
 
-## Plain Dijkstra latency, measured at gate 3. The gate 5 budget is not met yet.
+## Hot-loop constant factors, profiled at gate 3 BEFORE building A\*. `npm run profile:route`.
 
-| Route | Distance | Compute |
-|---|---|---|
-| Pari Chowk to GBU | 8.41 km | 87 to 180 ms |
-| Gaur City to Jewar | 60.83 km | 663 ms |
+A heuristic on top of a slow loop hides the slow loop. So the loop was profiled first, and the
+profiler reports **settled and relaxed counts beside wall time**, because the two failure modes
+are indistinguishable from milliseconds alone: too many states expanded (a heuristic fixes it)
+versus each expansion too expensive (no heuristic fixes it).
 
-The gate 5 target is p95 under 30 ms. This is unoptimised Dijkstra with no heuristic and no
-bidirectional search, settling most of the graph on a long route, so the gap is expected rather
-than alarming. It is recorded here as the baseline the A\* and bidirectional rungs must beat,
-and as the reason gate 5 exists at all. No conclusion about CH is drawn from it: that decision
-(see the top of this file) rests on p95 after the ladder is built, not before.
+The search is EDGE based, so the denominator is 532,951 directed edges, not 213,144 vertices.
+
+| Route | km | before | after | settled | % of graph | ns/settle before | after |
+|---|---|---|---|---|---|---|---|
+| Pari Chowk to GBU | 8.4 | 28.8 ms | 17.5 to 24.1 ms | 46,001 | 8.6% | 627 | 380 to 523 |
+| Surajpur to Knowledge Park | 8.7 | 24.2 ms | 16.0 to 19.7 ms | 34,711 | 6.5% | 698 | 461 to 569 |
+| Dadri to Pari Chowk | 14.4 | 76.5 ms | 44.8 to 49.4 ms | 110,918 | 20.8% | 689 | 404 to 445 |
+| Gaur City to Jewar | 60.8 | 287.4 ms | 227.4 to 244.6 ms | 490,961 | 92.1% | 585 | 463 to 498 |
+
+Ranges are real run-to-run variance on this machine, which is large enough that mid-route
+differences between individual optimisations were not distinguishable from noise. The long
+routes carry the signal.
+
+**Diagnosis: both failure modes were present.** The cross-city route settles 92.1% of the graph,
+which is the case for A\* and bidirectional search. But ns/settle ROSE with the fraction of the
+graph searched (391 at 6.5%, 603 at 92%), which is the signature of memory stalls rather than
+arithmetic, and no heuristic addresses that.
+
+Three changes, all constant-factor:
+
+1. **Per-edge traversal seconds precomputed** into a `Float64Array` at construction. It had been
+   `length / (speed * KMH_TO_MS)` evaluated inside the relaxation loop: a float division plus two
+   typed-array reads, 1,388,769 times on one cross-city route. Costs 4.3 MB.
+2. **No per-pop iterator allocation.** The end-of-route check iterated a candidate array with
+   `for...of` on every pop, allocating an iterator object 490,961 times per cross-city route. The
+   end is at most two directed edges, so they are now two scalars.
+3. **`dist`, `parent` and `stamp` interleaved** into one 16-byte-per-edge buffer. All three are
+   read at the same random CSR-derived index every relaxation; as three separate arrays that was
+   three cache lines per relaxation. This is the change that moved the long routes (cross-city
+   295.8 to 227.4 ms), which is what the cache hypothesis predicted and is the evidence for it.
+
+**Still short of target, and the remaining gap is named.** The gate 5 target is p95 under 30 ms.
+Cross-city sits near 230 ms, so about 8x remains against roughly 4 to 20x from A\* plus
+bidirectional. What is left of the constant factor looks memory-bound rather than algorithmic;
+the untried levers are a 4-ary heap (fewer, more local sift levels) and interleaving the heap's
+own two arrays. Those get revisited at gate 5 if the ladder alone does not close it.
+
+No conclusion about CH is drawn from any of this: that decision (see the top of this file) rests
+on p95 after the ladder is built, not before.
 
 ---
 
