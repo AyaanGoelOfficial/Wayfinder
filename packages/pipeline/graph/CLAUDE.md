@@ -28,6 +28,12 @@ structural: if this folder is right, no route the engine computes can be illegal
   signals, autos and unmarked speed breakers. Never inline a speed at a call site: a second
   source is how a route starts disagreeing with its own ETA. `maxspeed` wins when present and
   parseable; an unparseable value falls back to the class default rather than guessing.
+- **`CLASS_RANK` IS STORED PER EDGE, never inferred from speed.** The turn cost model needs to
+  know what KIND of road an edge is, to price turning off a big road onto a small one. Deriving
+  that from `edgeSpeedKmh` is wrong the moment a `maxspeed` tag appears: a residential street
+  posted at 60 would outrank a tertiary road. A `*_link` ranks WITH its parent, so leaving a
+  motorway by its own slip road is not charged as a demotion. It rides in the artifact's u8 block,
+  which is what made the format v2 bump.
 - **NO RESTRICTION IS SILENTLY DROPPED.** Every relation that cannot be resolved is counted by
   reason in `RestrictionStats`. A discarded restriction is an illegal turn the router will take
   happily, surfacing months later as a routing bug rather than here as a data-handling one.

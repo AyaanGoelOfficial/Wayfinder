@@ -23,7 +23,9 @@
  * runs for heap-ordering reasons. Golden routes depend on this.
  */
 import { haversineM } from '../shared/geo.ts';
-import type { LngLat } from '../shared/index.ts';
+import type { LngLat, TurnCostConfig } from '../shared/index.ts';
+import { buildTurnCosts } from './turncost.ts';
+import type { TurnCosts } from './turncost.ts';
 
 /**
  * The sub-polyline between two fractions of a polyline's total length, endpoints interpolated.
@@ -92,6 +94,8 @@ export interface RoutableGraph {
   readonly edgeWayId: Float64Array;
   readonly edgeShape: Int32Array;
   readonly edgeReversed: Uint8Array;
+  /** `CLASS_RANK` per edge, 0 for the biggest road. Read only by the turn cost model. */
+  readonly edgeClassRank: Uint8Array;
   readonly shapeOffset: Int32Array;
   readonly shapeLat: Int32Array;
   readonly shapeLon: Int32Array;
@@ -107,7 +111,17 @@ export interface Restrictions {
 export interface RouteResult {
   /** Directed edges traversed, in order. */
   readonly edges: readonly number[];
+  /** Total modelled cost: drive time plus turn penalties. This is what the search minimised. */
   readonly seconds: number;
+  /**
+   * The turn penalty portion of `seconds`, alone.
+   *
+   * Reported separately because the two are different KINDS of number and mixing them hides
+   * things. Drive time is comparable against another router's drive time; turn penalties are a
+   * modelling choice of ours. Any tool comparing our cost against a path priced from speeds only
+   * must subtract this, or it is comparing a model against a measurement.
+   */
+  readonly turnSeconds: number;
   readonly metres: number;
   /** Full-fidelity geometry, every shape point, clipped to the snapped start and end. */
   readonly geometry: readonly LngLat[];
@@ -168,11 +182,23 @@ export class Router {
    */
   private readonly secs: Float64Array;
 
+  /**
+   * Turn costs, or null when the caller passed no model.
+   *
+   * Optional on purpose. The toy graphs the ladder is tested on have no meaningful bearings, and
+   * forcing a turn model on them would make every unit test assert against angles rather than
+   * against the search. Production always passes one; `null` means every turn is free, which is
+   * exactly the behaviour this class had before turn costs existed.
+   */
+  private readonly turns: TurnCosts | null;
+
   constructor(
     private readonly g: RoutableGraph,
     private readonly r: Restrictions,
+    turnCost?: TurnCostConfig,
   ) {
     const n = g.edgeFrom.length;
+    this.turns = turnCost === undefined ? null : buildTurnCosts(g, turnCost);
     this.stateBuf = new ArrayBuffer(n * 16);
     this.distV = new Float64Array(this.stateBuf);
     this.metaV = new Int32Array(this.stateBuf);
@@ -333,6 +359,12 @@ export class Router {
     const csrOffset = g.csrOffset;
     const csrEdge = g.csrEdge;
     const edgeRestricted = this.r.edgeRestricted;
+    // Hoisted like the rest. `turnSec` is indexed by (incoming edge block, slot), so the inner
+    // loop reads it sequentially with the CSR cursor it is already walking: one array read per
+    // relaxation, no branch, no lookup. Null when no turn model was supplied, in which case the
+    // whole term is skipped by a single predicted-false check per relaxation.
+    const turnOff = this.turns === null ? null : this.turns.offset;
+    const turnSec = this.turns === null ? null : this.turns.seconds;
 
     while (this.heapSize > 0) {
       const e = this.pop();
@@ -366,6 +398,7 @@ export class Router {
       const restricted = edgeRestricted[e] === 1;
       const start = csrOffset[v] as number;
       const end = csrOffset[v + 1] as number;
+      const turnBase = turnOff === null ? 0 : (turnOff[e] as number);
 
       for (let i = start; i < end; i++) {
         const f = csrEdge[i] as number;
@@ -373,7 +406,11 @@ export class Router {
           restrictionsApplied++;
           continue;
         }
-        const nd = de + (secs[f] as number);
+        // Turn cost is charged on the ARC, so it is part of the tentative distance and is subject
+        // to the same relaxation as everything else. Charging it anywhere later would let a cheap
+        // arrival win on edge cost and then pay a turn it never competed on.
+        const nd =
+          de + (secs[f] as number) + (turnSec === null ? 0 : (turnSec[turnBase + (i - start)] as number));
         relaxed++;
         const m = f * 4;
         if (metaV[m + 3] !== gen) {
@@ -409,9 +446,32 @@ export class Router {
     metres -= firstFraction * (g.edgeLengthM[firstEdge] as number);
     metres -= (1 - endFrac) * (g.edgeLengthM[bestEnd] as number);
 
+    // Recovered from the chosen path rather than accumulated during the search: the search
+    // relaxes an edge many times and only the surviving parent chain is the route, so a running
+    // total would count turns the route never took.
+    let turnSeconds = 0;
+    if (this.turns !== null) {
+      const off = this.turns.offset;
+      const sec = this.turns.seconds;
+      for (let k = 0; k + 1 < edges.length; k++) {
+        const a = edges[k] as number;
+        const b = edges[k + 1] as number;
+        const v = g.edgeTo[a] as number;
+        const cs = g.csrOffset[v] as number;
+        const ce = g.csrOffset[v + 1] as number;
+        for (let i = cs; i < ce; i++) {
+          if ((g.csrEdge[i] as number) === b) {
+            turnSeconds += sec[(off[a] as number) + (i - cs)] as number;
+            break;
+          }
+        }
+      }
+    }
+
     return {
       edges,
       seconds: bestTotal,
+      turnSeconds,
       metres,
       geometry,
       settled,

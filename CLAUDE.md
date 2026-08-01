@@ -80,7 +80,7 @@ Cross-checks that need the built artifacts, so they are NOT part of `npm run gat
 ```bash
 npm run gate:fixtures    # frozen routing + search fixtures, held-out queries, restriction enforcement
 npm run gate:oracle      # places index vs pyosmium. ~6 min, cached on the extract md5s
-npm run gate:oracle -- --full   # ALSO re-derives the clip from raw extracts. Hours. Never yet run to completion
+npm run gate:oracle -- --full   # ALSO re-derives the clip from raw extracts. 993 s, has passed
 npm run profile:route    # settled/relaxed counts beside wall time, for the gate 5 ladder
 ```
 
@@ -88,6 +88,10 @@ Measurement and acceptance:
 
 ```bash
 npm run validate         # 50 random + 10 landmark pairs vs OSRM. Median <3%, p95 <7%
+npm run diagnose:route   # WHY a pair diverges, grouped by cause -> DIVERGENCE.md. Add --all
+npm run calibrate:speeds # tagged maxspeed per class vs our defaults. Read the sample counts
+npm run experiment:speeds # A/B a speed table over the same 56 pairs. No rebuild needed
+npm run experiment:turns  # A/B the turn cost model. Reports SHAPE overlap, not just the delta
 npm run bench            # p50/p95/p99 for route, snap, search -> BENCHMARKS.md
 npm run verify:browser   # console, visual, network, GPS scenarios, throttled traces
 npm run acceptance       # everything, one pass/fail table, every charter item mapped

@@ -20,7 +20,7 @@
  *   pad         to an 8-byte boundary
  *   f64 block   vertexLat, vertexLon, vertexNodeId, edgeLengthM, edgeWayId
  *   i32 block   csrOffset, csrEdge, edgeFrom, edgeTo, edgeShape, shapeOffset, shapeLat, shapeLon
- *   u8  block   edgeSpeedKmh, edgeReversed, edgePrivate, edgeRestricted
+ *   u8  block   edgeSpeedKmh, edgeReversed, edgePrivate, edgeRestricted, edgeClassRank
  *
  * VERSIONING. Any change to the section list, the order, or an element type is a version bump.
  * The loader refuses a mismatch and names the command that rebuilds it, because a silently
@@ -30,11 +30,21 @@
 /** Spells "WGN1" so a truncated or wrong file is rejected on the first four bytes. */
 export const GRAPH_MAGIC = 0x5747_4e31;
 
-/** Bump on ANY layout change. See the versioning note above. */
-export const GRAPH_FORMAT_VERSION = 1;
+/**
+ * Bump on ANY layout change. See the versioning note above.
+ *
+ * v2 added `edgeClassRank` to the u8 block, for the turn cost model. It is stored rather than
+ * derived because the engine has no way tags: the alternative was inferring road class from
+ * `edgeSpeedKmh`, which a single `maxspeed` tag makes wrong (a residential street posted at 60
+ * would outrank a tertiary road).
+ */
+export const GRAPH_FORMAT_VERSION = 2;
 
 /** Byte length of the fixed header: magic, version, 6 counts, 2 JSON lengths, all u32. */
 export const GRAPH_HEADER_BYTES = 4 * 10;
+
+/** Per-edge u8 arrays, in write order. The count is what sizes the u8 block. */
+export const U8_SECTIONS_PER_EDGE = 5;
 
 export interface GraphFileCounts {
   readonly vertexCount: number;

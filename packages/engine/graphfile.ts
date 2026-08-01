@@ -10,7 +10,13 @@
  * The buffer must therefore outlive the returned object, which it does: the server holds it for
  * the process lifetime.
  */
-import { GRAPH_FORMAT_VERSION, GRAPH_HEADER_BYTES, GRAPH_MAGIC, alignUp } from '../shared/graphfile.ts';
+import {
+  GRAPH_FORMAT_VERSION,
+  GRAPH_HEADER_BYTES,
+  GRAPH_MAGIC,
+  U8_SECTIONS_PER_EDGE,
+  alignUp,
+} from '../shared/graphfile.ts';
 import type { SerializedTurns } from '../shared/graphfile.ts';
 import type { RoutableGraph, Restrictions } from './dijkstra.ts';
 
@@ -21,6 +27,7 @@ export interface LoadedArtifact {
     readonly vertexLon: Float64Array;
     readonly vertexNodeId: Float64Array;
     readonly edgePrivate: Uint8Array;
+    readonly edgeClassRank: Uint8Array;
   };
   readonly restrictions: Restrictions & {
     readonly banned: ReadonlyMap<number, ReadonlySet<number>>;
@@ -68,7 +75,7 @@ export function parseGraphArtifact(bytes: Uint8Array): LoadedArtifact {
   const i32Start = f64Start + f64Count * 8;
   const i32Count = V + 1 + E * 4 + (S + 1) + P * 2;
   const u8Start = i32Start + i32Count * 4;
-  const expected = u8Start - base + E * 4;
+  const expected = u8Start - base + E * U8_SECTIONS_PER_EDGE;
   if (bytes.byteLength < expected) {
     throw new Error(
       `routing artifact is truncated: header declares ${expected.toLocaleString('en-US')} bytes, ` +
@@ -107,6 +114,7 @@ export function parseGraphArtifact(bytes: Uint8Array): LoadedArtifact {
   const edgeReversed = new Uint8Array(bytes.buffer, u8Start + E, E);
   const edgePrivate = new Uint8Array(bytes.buffer, u8Start + E * 2, E);
   const edgeRestricted = new Uint8Array(bytes.buffer, u8Start + E * 3, E);
+  const edgeClassRank = new Uint8Array(bytes.buffer, u8Start + E * 4, E);
 
   const banned = new Map<number, ReadonlySet<number>>();
   for (const [via, tos] of turns.banned) banned.set(via, new Set(tos));
@@ -118,6 +126,7 @@ export function parseGraphArtifact(bytes: Uint8Array): LoadedArtifact {
       vertexLat, vertexLon, vertexNodeId,
       csrOffset, csrEdge,
       edgeFrom, edgeTo, edgeLengthM, edgeSpeedKmh, edgeWayId, edgeShape, edgeReversed, edgePrivate,
+      edgeClassRank,
       shapeOffset, shapeLat, shapeLon,
     },
     restrictions: { banned, bannedSequences, edgeRestricted },

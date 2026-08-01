@@ -23,7 +23,7 @@
 import { writeFile } from 'node:fs/promises';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { BUILD_AREA, SNAP_DESTINATION_M } from '../config/city.ts';
+import { BUILD_AREA, SNAP_DESTINATION_M, TURN_COST } from '../config/city.ts';
 import { ROUTING_FIXTURES } from '../config/fixtures/routing.ts';
 import { SnapIndex } from '../packages/engine/snap.ts';
 import { Router } from '../packages/engine/dijkstra.ts';
@@ -100,7 +100,7 @@ try {
   process.exit(1);
 }
 const snap = new SnapIndex(artifact.graph, BUILD_AREA);
-const router = new Router(artifact.graph, artifact.restrictions);
+const router = new Router(artifact.graph, artifact.restrictions, TURN_COST);
 console.log(`  graph  ${artifact.graph.edgeFrom.length.toLocaleString('en-US')} directed edges`);
 
 // ---- Pair selection ----
@@ -175,10 +175,15 @@ for (const p of pairs) {
     continue;
   }
   const distDelta = (ours.metres - theirs.distance) / theirs.distance;
-  const durDelta = (ours.seconds - theirs.duration) / theirs.duration;
+  // DRIVE TIME ONLY. `ours.seconds` is the modelled cost and includes our turn penalties, which
+  // OSRM's duration does not contain and never will. Comparing the two directly would charge our
+  // modelling choice to the reference and make the router look worse the more carefully it prices
+  // turns. Subtracting `turnSeconds` compares the two quantities that actually mean the same thing.
+  const oursDriveS = ours.seconds - ours.turnSeconds;
+  const durDelta = (oursDriveS - theirs.duration) / theirs.duration;
   rows.push({
     label: p.label, kind: p.kind, a: p.a, b: p.b,
-    oursM: ours.metres, osrmM: theirs.distance, oursS: ours.seconds, osrmS: theirs.duration,
+    oursM: ours.metres, osrmM: theirs.distance, oursS: oursDriveS, osrmS: theirs.duration,
     distDelta, durDelta,
   });
   console.log(
@@ -237,6 +242,10 @@ const md = [
   'table. Asserting on duration would assert on that table rather than on the router. Closing that',
   'gap is gate 6.',
   '',
+  '**Duration here is DRIVE TIME, with our turn penalties subtracted.** Our modelled cost includes',
+  "them and OSRM's duration does not, so leaving them in would compare a model against a",
+  'measurement and make the router look worse the more carefully it prices turns.',
+  '',
   '## How to read a divergence',
   '',
   'Sign matters, and the two directions have different candidate causes.',
@@ -248,12 +257,18 @@ const md = [
   '**We are SHORTER than OSRM.** More concerning: it suggests we permit something OSRM does not.',
   'An illegal turn, a road class OSRM excludes for cars, or a one-way taken the wrong way.',
   '',
-  `**A sampling caveat, stated because it changes the reading.** Random pairs are drawn uniformly`,
+  '**This file says WHICH pairs diverge. `DIVERGENCE.md` says WHY**, per pair, grouped by cause,',
+  'from `npm run diagnose:route -- --all`. Read that one before drawing a conclusion from this one:',
+  'ten worst cases sharing a single root cause is one bug, and a ranking by percentage hides it.',
+  '',
+  '**The near-edge caveat is now MEASURED, not hypothesised.** Random pairs are drawn uniformly',
   'from the BUILD_AREA bounding box, so some land within a few km of its edge. Our graph stops at',
-  'that boundary plus a 3 km buffer while OSRM has all of India, so near-edge pairs can diverge for',
-  'a reason that is not a router bug. This is a HYPOTHESIS about the near-edge cases below, not a',
-  'verified cause, and it is deliberately not used to exclude anything from the statistics.',
-  'Landmark pairs sit well inside the area and carry no such excuse.',
+  'that boundary plus a 3 km buffer while OSRM has all of India. Counting the OSM nodes on OSRM\'s',
+  'route that our clip does not contain shows 16 of these 56 pairs are answered by leaving the',
+  'area. Those pairs measure the clip boundary rather than the router. They are NOT excluded from',
+  'the statistics here, and excluding them would not help anyway: median improves to 2.44% while',
+  'p95 worsens to 28.27%. Landmark pairs sit well inside the area and carry no such excuse, which',
+  'is why `gautam-buddha-university to jewar` is the pair that matters most below.',
   '',
   '## Ten worst divergences by distance',
   '',

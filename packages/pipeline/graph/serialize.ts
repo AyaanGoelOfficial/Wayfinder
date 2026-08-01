@@ -11,6 +11,7 @@ import {
   GRAPH_FORMAT_VERSION,
   GRAPH_HEADER_BYTES,
   GRAPH_MAGIC,
+  U8_SECTIONS_PER_EDGE,
   alignUp,
 } from '../../shared/graphfile.ts';
 import type { SerializedTurns } from '../../shared/graphfile.ts';
@@ -40,7 +41,7 @@ export function serializeGraphArtifact(graph: Graph, turns: TurnTable): Uint8Arr
   const i32Start = f64Start + f64Count * 8;
   const i32Count = V + 1 + E * 4 + (S + 1) + P * 2;
   const u8Start = i32Start + i32Count * 4;
-  const total = u8Start + E * 4;
+  const total = u8Start + E * U8_SECTIONS_PER_EDGE;
 
   const buf = new ArrayBuffer(total);
   const bytes = new Uint8Array(buf);
@@ -87,11 +88,12 @@ export function serializeGraphArtifact(graph: Graph, turns: TurnTable): Uint8Arr
   putI(graph.shapeLat);
   putI(graph.shapeLon);
 
-  const u8 = new Uint8Array(buf, u8Start, E * 4);
+  const u8 = new Uint8Array(buf, u8Start, E * U8_SECTIONS_PER_EDGE);
   u8.set(graph.edgeSpeedKmh, 0);
   u8.set(graph.edgeReversed, E);
   u8.set(graph.edgePrivate, E * 2);
   u8.set(turns.edgeRestricted, E * 3);
+  u8.set(graph.edgeClassRank, E * 4);
 
   return bytes;
 }

@@ -39,6 +39,25 @@ export interface SnapResult {
   readonly purpose: SnapPurpose;
 }
 
+/**
+ * What a turn costs, in seconds. The VALUES live in `config/city.ts`; this is only their shape.
+ *
+ * Stated here so `packages/engine/turncost.ts` can take the model as a parameter rather than
+ * importing the constant, which is what lets `npm run experiment:turns` sweep it over the
+ * validation set without editing config. Every field must be non-negative: the A* admissibility
+ * proof rests on turn costs only ever ADDING to a path.
+ */
+export interface TurnCostConfig {
+  readonly straightDeg: number;
+  readonly turnS: number;
+  readonly crossTrafficS: number;
+  readonly crossMinDeg: number;
+  readonly classDropS: number;
+  readonly uTurnS: number;
+  /** True where traffic drives on the left, so the turn that crosses oncoming traffic is a right. */
+  readonly drivesOnLeft: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Routing
 // ---------------------------------------------------------------------------

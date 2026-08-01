@@ -194,3 +194,52 @@ export const ROUTE_BUDGET = {
   /** p95 for the first route of a trip, any pair in the area, including corner to corner. */
   initialP95Ms: 150,
 } as const;
+
+/**
+ * What a turn costs, in seconds. Applied by `packages/engine/turncost.ts`.
+ *
+ * WHY THIS EXISTS. Until gate 4 the router priced every turn at ZERO, which is not a modelling
+ * choice anyone made, it is a gap. A router with free turns prefers a many-turn path through small
+ * streets over a fewer-turn path along an arterial whenever the small path is even slightly
+ * shorter, and that difference then shows up as a distance divergence against any reference that
+ * does price turns.
+ *
+ * EVERY VALUE IS CALIBRATED AGAINST THE VALIDATION SET, not copied from another router's profile.
+ * `npm run experiment:turns` sweeps them over the same 56 pairs `npm run validate` uses and reports
+ * what each one does to the delta distribution. Changing a number here without re-running that is
+ * how a cost model becomes folklore.
+ *
+ * ALL VALUES MUST STAY NON-NEGATIVE. The A* heuristic's admissibility proof depends on it: turn
+ * costs can only ADD to a path, so a heuristic that lower-bounds the turn-free cost still lower
+ * bounds the real one. A negative turn cost would silently break optimality rather than fail.
+ */
+export const TURN_COST = {
+  /** Bearing change up to this, in degrees, is going straight ahead and is free. */
+  straightDeg: 25,
+  /** Seconds for a square 90 degree turn. Scales linearly with severity beyond `straightDeg`. */
+  turnS: 3,
+  /**
+   * Extra seconds for a turn that crosses oncoming traffic, which has to wait for a gap.
+   * India drives on the LEFT, so the crossing turn is a RIGHT turn. Getting this backwards
+   * penalises exactly the turns that are free and is invisible in any aggregate number.
+   */
+  crossTrafficS: 3,
+  /** Below this bearing change a turn is a bend in the road, not a crossing manoeuvre. */
+  crossMinDeg: 40,
+  /** Seconds per step DOWN the road class rank. This is what stops residential rat running. */
+  classDropS: 2,
+  /**
+   * Seconds for a U-turn onto the reverse twin. A PENALTY, never a ban.
+   *
+   * THIS ONE IS NOT CALIBRATED, and cannot be from the validation set: across all 56 pairs the
+   * router takes ZERO U-turns, so a candidate with  produces results identical to one
+   * with , down to every digit. That matches the gate 3 measurement of 0 reverse-twin
+   * U-turns over 92 km of real routes. The mechanism is proved by unit test, not by this number.
+   * 40 s is a reasoned value, roughly what waiting for a gap and turning actually costs, and it is
+   * deliberately on the discouraging side. It gets its real calibration at gate 8, where re-routing
+   * from a matched mid-road position is the first thing that will actually exercise it.
+   */
+  uTurnS: 40,
+  /** True where traffic drives on the left. Decides which way a crossing turn goes. */
+  drivesOnLeft: true,
+} as const;

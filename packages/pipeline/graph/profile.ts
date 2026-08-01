@@ -39,6 +39,29 @@ export const CLASS_SPEED_KMH: Readonly<Record<string, number>> = {
   road: 25,
 };
 
+/**
+ * Road class rank. 0 is the biggest road, 7 the smallest.
+ *
+ * Used ONLY by the turn cost model in `packages/engine/turncost.ts`, to price the act of turning
+ * off a bigger road onto a smaller one. It is deliberately NOT derived from `CLASS_SPEED_KMH`: a
+ * residential street tagged `maxspeed=60` would then outrank a tertiary road, and the whole point
+ * is to capture what KIND of road it is, not how fast this particular one is posted.
+ *
+ * A `*_link` ranks WITH ITS PARENT, never below it. A link is the transition between two roads,
+ * not a demotion, and ranking `motorway_link` under `motorway` would charge a penalty for leaving
+ * a motorway by the only means a motorway provides.
+ */
+export const CLASS_RANK: Readonly<Record<string, number>> = {
+  motorway: 0, motorway_link: 0,
+  trunk: 1, trunk_link: 1,
+  primary: 2, primary_link: 2,
+  secondary: 3, secondary_link: 3,
+  tertiary: 4, tertiary_link: 4,
+  unclassified: 5, road: 5,
+  residential: 6,
+  living_street: 7, service: 7,
+};
+
 /** Not drivable by car under any tagging. Listed rather than inferred, so it is auditable. */
 const NEVER_DRIVABLE = new Set([
   'footway', 'path', 'cycleway', 'steps', 'pedestrian', 'bridleway', 'corridor',
@@ -85,6 +108,8 @@ export interface WayClassification {
   readonly speedKmh: number;
   /** True when speedKmh came from a maxspeed tag rather than the class default table. */
   readonly speedTagged: boolean;
+  /** `CLASS_RANK` of this way's highway class. 0 is the biggest road. */
+  readonly classRank: number;
   readonly roundabout: boolean;
 }
 
@@ -96,6 +121,7 @@ const NOT_DRIVABLE: WayClassification = {
   backward: false,
   speedKmh: 0,
   speedTagged: false,
+  classRank: 255,
   roundabout: false,
 };
 
@@ -176,6 +202,7 @@ export function classifyWay(tags: ReadonlyMap<string, string>): WayClassificatio
     backward,
     speedKmh: tagged ?? classDefault,
     speedTagged: tagged !== undefined,
+    classRank: CLASS_RANK[highway] ?? 5,
     roundabout,
   };
 }

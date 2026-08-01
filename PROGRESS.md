@@ -13,7 +13,7 @@ Update this in the same change that invalidates a line in it, never as a follow-
 | 1 city build | closed. Graph, places and tiles from one merged, deduped source |
 | 2 map on screen | closed. Own PMTiles, own style, own SDF glyphs, Devanagari confirmed rendering |
 | 3 Dijkstra routing | closed. Route endpoint, client rendering, charter items 1 and 2 measured |
-| 4 OSRM validation | Tooling built, baseline measured, **FAILS**. Distance median 3.39% against 3%, p95 17.90% against 7%. See `VALIDATION.md` |
+| 4 OSRM validation | Diagnosed, turn costs built. Distance median **2.73%, PASSES** the 3% threshold; p95 16.98% against 7%, still fails. 0 router bugs, 0 graph defects, 16 of 56 pairs are OSRM leaving the area. `DIVERGENCE.md`, `DESIGN.md`. Open question is whether the p95 residual is accepted as a modelling difference |
 | 5 A\* and bidirectional | Tooling built, baseline measured, both budgets **missed**. Re-route p95 359.50 ms against 30 ms; initial p95 386.24 ms against 150 ms. See `BENCHMARKS.md`. Algorithms NOT started |
 | 6 legality pass | NOT started. The U-turn penalty is specified in `DESIGN.md` and lands here |
 | 7 search and turn-by-turn | NOT started. Places index and fuzzy search exist; instructions do not |
@@ -40,11 +40,27 @@ Update this in the same change that invalidates a line in it, never as a follow-
   initial-route p95 **386.24 ms** against 150 ms. Re-route p50 is 43.72 ms, so the distribution is
   easier on average and its p95 is set by early-trip long re-routes, which are in the sample on
   purpose. `npm run bench`, `BENCHMARKS.md`.
-- **Gate 4 divergence from OSRM exceeds the threshold, in BOTH directions.** Worst cases run from
-  +37.5% (we are 12 km longer) to -37.5% (we are 24 km shorter). Longer suggests a missing road or
-  over-restriction; shorter suggests we permit something OSRM does not, which is the more serious
-  reading. One landmark pair, `gautam-buddha-university to jewar`, is +37.49% and sits well inside
-  the area, so it carries no near-boundary excuse. Not yet investigated.
+- **Gate 4 divergence is the SPEED TABLE, and nothing else.** Investigated pair by pair with
+  `npm run diagnose:route -- --all`: 40 of 56 pairs are cost model, 16 are OSRM leaving
+  `BUILD_AREA`, and **0 are router bugs, 0 are graph defects**. The search was cleared by routing
+  our own engine between OSRM's OWN endpoints, the only comparison that can accuse it; the graph
+  was cleared by two independent coverage measures that agree. Swapping only the class defaults
+  moves `gautam-buddha-university to jewar` from +37.49% to -0.72%, which proves the table is the
+  whole cause. It does not prove OSRM's table is right: against our own 1,773 tagged `maxspeed`
+  values its defaults sit ABOVE the local posted limit exactly where it helps (trunk 85 against
+  70, secondary 55 against 45). The locally-defensible correction makes agreement WORSE. Full
+  reasoning in `DESIGN.md`; per-pair table in `DIVERGENCE.md`.
+- **Turn costs now EXIST, and closing that gap moved the shape as well as the number.** Distance
+  median 3.39% to **2.73%**, inside its 3% threshold for the first time, and route shape overlap
+  with OSRM 70.50% to 75.10%. Both moved together, so the routes genuinely improved rather than the
+  metric drifting. Four terms, each isolated in the sweep: severity, crossing oncoming traffic
+  (a RIGHT turn here), dropping road class, and the U-turn. `npm run experiment:turns`, reasoning
+  in `DESIGN.md`.
+- **The U-turn penalty ships UNCALIBRATED, and that is a measurement, not an omission.** Across all
+  56 validation pairs the router takes zero U-turns, so the total U-turn penalty charged is 0.0
+  minutes and `uturn-only` reproduces `off` to every digit. The validation set carries no signal
+  about the number. The mechanism is proved by unit test instead; the value gets calibrated at gate
+  8, where re-routing from a matched mid-road position first exercises it.
 - **tilemaker wall time in the build report is contaminated by concurrent load.** Isolated it takes
   about **18 s**, measured twice (18.4 s to `%TEMP%`, 17.96 s into `data/`), so output location and
   OneDrive are ruled out. One recorded build said 2,425.4 s for byte-identical output, 132x. The

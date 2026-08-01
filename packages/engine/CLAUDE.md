@@ -8,7 +8,21 @@ which is what lets the whole ladder be tested against hand-built toy graphs.
   away as rounding. Dijkstra is the definition of correct here.
 - **The A\* heuristic must stay admissible**, and the proof lives in a comment beside it.
   An inadmissible heuristic still returns routes, just silently wrong ones, which is the
-  worst failure mode in this package.
+  worst failure mode in this package. **Turn costs do not threaten this and the proof must
+  say so explicitly rather than leave it implied:** every term in `TURN_COST` is
+  non-negative, enforced at construction by `assertNonNegative`, so turn costs can only ADD
+  to a path. A heuristic that lower-bounds the turn-free remaining cost therefore still
+  lower-bounds the real cost. A negative turn cost would break optimality silently, which is
+  why that check is mechanical and not a review item.
+- **TURN COSTS ARE CHARGED ON THE ARC, inside relaxation.** The cost of moving from edge `e`
+  to edge `f` depends on both, so it belongs in the tentative distance and competes like any
+  other cost. Charging it after the fact would let a cheap arrival win on edge cost and then
+  pay a turn it never competed on. `seconds` is the total modelled cost and `turnSeconds` is
+  the turn portion of it: anything comparing our cost against a path priced from speeds alone
+  must subtract `turnSeconds`, or it compares a model against a measurement.
+- **`Router`'s turn model is OPTIONAL, and the toy graphs leave it off.** Toy graphs have no
+  meaningful bearings, and forcing a turn model on them would make every unit test assert
+  against angles instead of against the search. Production always passes one.
 - **Zero allocation in the hot loop.** Preallocated typed-array dist/parent/visited with
   GENERATION COUNTERS rather than clearing between queries. Clearing a million-entry array
   per request is the mistake this note exists to prevent.

@@ -208,6 +208,150 @@ to elsewhere either.
 
 ---
 
+## Gate 4 divergence: not the graph, not the search, only the speed table. Measured at gate 4.
+
+`npm run diagnose:route -- --all` sorts every validation pair into a cause instead of ranking it
+by size. Ten worst cases with one shared cause is one bug, and the ranking makes it look like ten.
+
+**Result over all 56 pairs: 40 cost model, 16 OSRM leaving `BUILD_AREA`, ZERO router bugs, ZERO
+graph defects.**
+
+**How a cause is decided.** Not "do the two lines differ" but "is OSRM's own path cheaper or more
+expensive than ours, under OUR cost model, between the SAME endpoints". Cheaper means the search
+missed something real. More expensive means the search did its job and the table chose the road.
+
+Three confounds had to be removed first, and each one had invented a bug that was not there:
+
+- **A way sharing ONE node with the route is not a way the route drove.** Every footway and field
+  track crossing a road shares a junction node. Counting those reported 12 missing ways on
+  GBU to Jewar, where nothing at all was missing. A way now counts only when it holds two nodes
+  ADJACENT in OSRM's own node sequence.
+- **A road outside `BUILD_AREA` has no clipped way, so a way-based count cannot see it.**
+  `random 33` reported zero missing ways beside 32.53 km of uncovered geometry. Two measures
+  contradicting each other means neither is usable. Counting OSRM nodes absent from the clip
+  resolves it, and turns the near-edge sampling caveat from a hypothesis into a measured cause.
+- **The two engines snap the request to different graphs.** Comparing our cost from OUR endpoints
+  against OSRM's line from ITS endpoints charges the snapping difference to the search. On
+  `random 50` that alone read as a 1.1 min router bug; routing between OSRM's own endpoints gives
+  39.8 min against its line priced at 39.8 min, an exact match. The instrument is also measured
+  against itself: our line priced by the same method reproduces the router's exact cost, 0.00 min
+  error on every pair checked.
+
+**The 86 SCC drops on `random 42` are correct behaviour, not a defect.** They are the
+`Delhi Eastern Peripheral Expressway` where it leaves the area: the in-clip stub connects to the
+rest only through roads outside, so it is genuinely its own component. That is what the 3 km
+buffer bounds, and what the buffer cannot reach is meant to be dropped.
+
+**The table is the whole remaining cause, proved by swapping it.** `npm run experiment:speeds`
+re-derives `edgeSpeedKmh` under candidate tables over the SAME graph and re-runs every pair.
+`Router` reads speeds once in its constructor, so this is exact rather than an approximation, and
+it costs seconds instead of a `build-city` per candidate. Tagged `maxspeed` is never overridden;
+only defaults move.
+
+| table | dist median | dist p95 | dur median | dur p95 |
+|---|---|---|---|---|
+| current | 3.39% | 17.90% | 7.76% | 21.78% |
+| osrm-car | **1.04%** | 15.08% | 5.34% | 14.95% |
+| posted-x0.8 | 3.82% | 17.69% | 21.82% | 42.25% |
+| local-fix | 3.25% | 20.89% | 11.90% | 29.24% |
+| flatter | 2.21% | 21.07% | 5.58% | 14.14% |
+
+Under `osrm-car`, GBU to Jewar goes from +37.49% to **-0.72%** and `random 26` from -37.46% to
++0.98%, with nothing else changed. So the table explains the entire cost-model group.
+
+**We are NOT adopting it, and the reason is in our own data.** `npm run calibrate:speeds` reads
+the 1,773 parseable `maxspeed` tags in our clip. Against the local posted medians, OSRM's defaults
+sit ABOVE the limit on exactly the classes that fix the divergence: trunk **85 against a posted 70**
+(n=319), secondary **55 against a posted 45** (n=52). car.lua is tuned for a different road
+network. Matching it would buy agreement by modelling this city less accurately, which is the
+definition of chasing parity.
+
+**And the locally-grounded correction makes agreement worse, which is the finding that settles
+it.** Only two of our numbers are contradicted by local posted limits: trunk kept 100% of its
+limit while every other class took a 10 to 25% discount, and residential sat at 125% of its own
+limit. `local-fix` corrects exactly those two and moves p95 from 17.90% to 20.89% and duration
+median from 7.76% to 11.90%. There is no table that is both more locally accurate AND closer to
+OSRM. The two objectives point in opposite directions.
+
+**Excluding the 16 boundary pairs does not rescue the gate either**, so it is not proposed:
+median improves to 2.44% but p95 worsens to 28.27%, because the remaining 40 still contain
+GBU to Jewar. Both columns are printed by the experiment; neither replaces the other.
+
+**Still untested, and named rather than implied:** we apply **no turn penalty at all**, while
+OSRM's car profile does. A router that prices turns at zero prefers many-turn paths through
+smaller streets. That is not what drove GBU to Jewar, where we took the expressway, so it is not
+the cause here, but it is the one modelling gap this investigation did not close. It belongs with
+the U-turn penalty at gate 6, and both are calibrated against this same validation set.
+
+---
+
+## Turn costs: a gap closed, not a choice made. Built at gate 4, calibrated on the divergence set.
+
+Until this, every turn cost ZERO. That is not a modelling decision anyone took, it is a gap, and
+it has a predictable shape: a router with free turns prefers a many-turn path through small streets
+over a fewer-turn path along an arterial whenever the small path is even slightly shorter, because
+nothing about the small path costs extra. `packages/engine/turncost.ts`, values in `config/city.ts`,
+swept by `npm run experiment:turns`.
+
+**Four terms, kept separate so each can be argued about alone rather than vanishing into one fudge
+factor:** severity from bearing delta, crossing oncoming traffic, dropping road class, and the
+U-turn. The speed table was held FIXED throughout, so every number below is attributable.
+
+**Each term isolated, then combined. All 56 validation pairs.**
+
+| candidate | dist median | dist p95 | overlap | GBU to Jewar |
+|---|---|---|---|---|
+| off | 3.39% | 17.90% | 70.50% | 37.49% |
+| severity only | 3.19% | 16.98% | 74.63% | 37.49% |
+| crossing only | 3.10% | 14.81% | 73.81% | 37.49% |
+| class drop only | 2.91% | 22.15% | 71.25% | 37.49% |
+| U-turn only | 3.39% | 17.90% | 70.50% | 37.49% |
+| **shipped (3 / 3 / 2 / 40)** | **2.73%** | **16.98%** | **75.10%** | 37.49% |
+| class heavy | 2.58% | 16.98% | 74.81% | 37.49% |
+| strong | 3.20% | 16.98% | 73.74% | 37.60% |
+
+`overlap` is the share of OUR route length running within 25 m of OSRM's line, averaged over the 40
+pairs that stayed inside `BUILD_AREA`. It exists because a distance delta can fall while the route
+runs down a different road entirely, which would mean the model got the right number by accident.
+
+**The gap was REAL: the shape converged.** Overlap rises 70.50% to 75.10%, and the distance median
+falls 3.39% to 2.73%, inside its 3% threshold for the first time. Both moved together, which is the
+evidence that the routes actually changed for the better rather than the metric drifting.
+
+**And it is NOT the cause of the landmark divergence.** `gautam-buddha-university to jewar` is
+unmoved at 37.49% under every candidate, and its route is byte identical: same 43.87 km, same
+58% motorway, same Yamuna Expressway. Only its cost rose, by the 1.1 min of turn penalties it now
+pays. For that pair the residual really is the speed table, which is what the sweep was run to find
+out.
+
+**`class-heavy` scores a better median and was NOT taken.** 2.58% against 2.73%, but on worse
+overlap and with 9 pairs moved rather than 5. Choosing it would be selecting the larger intervention
+on the weaker signal, for a metric that is already inside its threshold.
+
+**THE U-TURN PENALTY CANNOT BE CALIBRATED HERE, and this is the finding, not a gap in the work.**
+`uturn-only` reproduces `off` in every column to every digit, and the total U-turn penalty charged
+across all 56 routes is **0.0 minutes**. The router takes no U-turns on any validation pair, exactly
+as the gate 3 measurement of 0 reverse-twin U-turns over 92 km predicted. So the validation set
+carries zero signal about `uTurnS` and no sweep over it can mean anything. The MECHANISM is proved
+instead by unit test, `tests/engine/turncost.test.ts`: charged at a junction, exempt where outgoing
+degree is 1. The pinned terms hold, a penalty and never a ban. The number stays a reasoned 40 s and
+gets its real calibration at gate 8, where re-routing from a matched mid-road position is the first
+thing that will actually exercise it.
+
+**Admissibility, since A\* comes next.** Every term is non-negative, enforced at construction by
+`assertNonNegative` rather than left to review, because a negative turn cost does not fail, it
+silently breaks optimality. Turn costs can therefore only ADD to a path, so any heuristic that lower
+bounds the turn-free remaining cost still lower bounds the real one and stays admissible with no
+modification. That is the sentence the A\* proof depends on and it is why the constraint is
+mechanical.
+
+**One convention worth stating, because it is exactly wrong half the time.** India drives on the
+LEFT, so the turn that waits for a gap in oncoming traffic is the RIGHT turn. `drivesOnLeft` is an
+explicit flag, not baked in. `bearingDelta` returns (-180, 180] closed at the top so an exact
+reversal is classified as crossing rather than escaping the penalty on a sign convention.
+
+---
+
 ## Hot-loop constant factors, profiled at gate 3 BEFORE building A\*. `npm run profile:route`.
 
 A heuristic on top of a slow loop hides the slow loop. So the loop was profiled first, and the

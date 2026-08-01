@@ -22,7 +22,7 @@ import type { ApiError, LngLat, RouteResponse } from '../shared/index.ts';
 import { SnapIndex } from '../engine/snap.ts';
 import { Router } from '../engine/dijkstra.ts';
 import { parseGraphArtifact } from '../engine/graphfile.ts';
-import { BUILD_AREA, SNAP_DESTINATION_M } from '../../config/city.ts';
+import { BUILD_AREA, SNAP_DESTINATION_M, TURN_COST } from '../../config/city.ts';
 
 const DATA = resolve(import.meta.dirname, '../../data');
 const PMTILES = resolve(DATA, 'wayfinder-gn.pmtiles');
@@ -198,7 +198,7 @@ try {
 const graphStats = artifact.stats.graph as Record<string, number>;
 const restrictionStats = artifact.stats.restrictions as Record<string, number>;
 const snapIndex = new SnapIndex(artifact.graph, BUILD_AREA);
-const router = new Router(artifact.graph, artifact.restrictions);
+const router = new Router(artifact.graph, artifact.restrictions, TURN_COST);
 console.log(
   `graph: ${(graphStats['verticesAfterScc'] ?? 0).toLocaleString('en-US')} vertices, ` +
     `${(graphStats['edgesAfterScc'] ?? 0).toLocaleString('en-US')} edges, ` +
