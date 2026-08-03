@@ -23,7 +23,7 @@
 import { writeFile } from 'node:fs/promises';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { BUILD_AREA, SNAP_DESTINATION_M, TURN_COST } from '../config/city.ts';
+import { BUILD_AREA, OBJECTIVE, SNAP_DESTINATION_M, TURN_COST } from '../config/city.ts';
 import { ROUTING_FIXTURES } from '../config/fixtures/routing.ts';
 import { SnapIndex } from '../packages/engine/snap.ts';
 import { Router } from '../packages/engine/dijkstra.ts';
@@ -100,7 +100,7 @@ try {
   process.exit(1);
 }
 const snap = new SnapIndex(artifact.graph, BUILD_AREA);
-const router = new Router(artifact.graph, artifact.restrictions, TURN_COST);
+const router = new Router(artifact.graph, artifact.restrictions, TURN_COST, OBJECTIVE);
 console.log(`  graph  ${artifact.graph.edgeFrom.length.toLocaleString('en-US')} directed edges`);
 
 // ---- Pair selection ----
@@ -179,7 +179,7 @@ for (const p of pairs) {
   // OSRM's duration does not contain and never will. Comparing the two directly would charge our
   // modelling choice to the reference and make the router look worse the more carefully it prices
   // turns. Subtracting `turnSeconds` compares the two quantities that actually mean the same thing.
-  const oursDriveS = ours.seconds - ours.turnSeconds;
+  const oursDriveS = ours.driveSeconds;
   const durDelta = (oursDriveS - theirs.duration) / theirs.duration;
   rows.push({
     label: p.label, kind: p.kind, a: p.a, b: p.b,

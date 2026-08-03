@@ -20,7 +20,7 @@
  *   pad         to an 8-byte boundary
  *   f64 block   vertexLat, vertexLon, vertexNodeId, edgeLengthM, edgeWayId
  *   i32 block   csrOffset, csrEdge, edgeFrom, edgeTo, edgeShape, shapeOffset, shapeLat, shapeLon
- *   u8  block   edgeSpeedKmh, edgeReversed, edgePrivate, edgeRestricted, edgeClassRank
+ *   u8  block   edgeSpeedKmh, edgeReversed, edgePrivate, edgeRestricted, edgeClassRank, edgeToll
  *
  * VERSIONING. Any change to the section list, the order, or an element type is a version bump.
  * The loader refuses a mismatch and names the command that rebuilds it, because a silently
@@ -37,14 +37,19 @@ export const GRAPH_MAGIC = 0x5747_4e31;
  * derived because the engine has no way tags: the alternative was inferring road class from
  * `edgeSpeedKmh`, which a single `maxspeed` tag makes wrong (a residential street posted at 60
  * would outrank a tertiary road).
+ *
+ * v3 added `edgeToll`. Whether a road charges a toll is a FACT about the road and belongs in the
+ * graph; what a toll is worth is a preference and lives in `config/city.ts`. Keeping the two apart
+ * is what lets the same artifact serve both "tolls allowed but priced" and "avoid tolls entirely"
+ * without a rebuild.
  */
-export const GRAPH_FORMAT_VERSION = 2;
+export const GRAPH_FORMAT_VERSION = 3;
 
 /** Byte length of the fixed header: magic, version, 6 counts, 2 JSON lengths, all u32. */
 export const GRAPH_HEADER_BYTES = 4 * 10;
 
 /** Per-edge u8 arrays, in write order. The count is what sizes the u8 block. */
-export const U8_SECTIONS_PER_EDGE = 5;
+export const U8_SECTIONS_PER_EDGE = 6;
 
 export interface GraphFileCounts {
   readonly vertexCount: number;

@@ -47,6 +47,29 @@ export interface SnapResult {
  * validation set without editing config. Every field must be non-negative: the A* admissibility
  * proof rests on turn costs only ever ADDING to a path.
  */
+/**
+ * What the router minimises beyond raw travel time. VALUES live in `config/city.ts`.
+ *
+ * Passed in rather than imported so the calibration scripts can vary it without editing config,
+ * and so the shape is stated once in the contract rather than inferred from a constant.
+ * `secondsPerKm` and `tollReluctanceSecondsPerKm` must be non-negative for the same reason every
+ * turn cost must be: A* admissibility depends on nothing ever making a path cheaper.
+ */
+export interface ObjectiveConfig {
+  /** Seconds charged per kilometre travelled, on top of drive time. The distance preference. */
+  readonly secondsPerKm: number;
+  /** Extra seconds per kilometre on a tolled road. A reluctance, not a fare model. */
+  readonly tollReluctanceSecondsPerKm: number;
+  /** Exclude tolled roads entirely unless a request overrides it. */
+  readonly avoidTollsByDefault: boolean;
+}
+
+/** Per-request overrides of the objective. Everything omitted falls back to the config. */
+export interface RouteOptions {
+  /** Exclude tolled roads from the search entirely. A stated choice, never a hidden default. */
+  readonly avoidTolls?: boolean;
+}
+
 export interface TurnCostConfig {
   readonly straightDeg: number;
   readonly turnS: number;

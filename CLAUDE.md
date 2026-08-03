@@ -58,7 +58,7 @@ a polish item. The banned defects are enumerated as the precision charter in `DE
 ## Commands
 
 ```bash
-npm run setup:tools      # vendor tilemaker v3.0.0 into tools/ (git-ignored)
+npm run setup:tools      # vendor tilemaker v2.4.0 into tools/ (git-ignored). v3.x does not run here
 npm run fetch:extracts   # download both zone extracts + verify live md5 -> data/
 npm run derive:bbox      # regenerate BUILD_AREA from the OSM boundary relation
 npm run build-city       # extracts -> graph + places + tiles. Does NOT re-download
@@ -87,11 +87,12 @@ npm run profile:route    # settled/relaxed counts beside wall time, for the gate
 Measurement and acceptance:
 
 ```bash
-npm run validate         # 50 random + 10 landmark pairs vs OSRM. Median <3%, p95 <7%
+npm run validate         # 6 landmark + 50 random pairs vs OSRM. Median <3%, p95 <7%
 npm run diagnose:route   # WHY a pair diverges, grouped by cause -> DIVERGENCE.md. Add --all
 npm run calibrate:speeds # tagged maxspeed per class vs our defaults. Read the sample counts
 npm run experiment:speeds # A/B a speed table over the same 56 pairs. No rebuild needed
 npm run experiment:turns  # A/B the turn cost model. Reports SHAPE overlap, not just the delta
+npm run experiment:objective # distance and toll preferences. Route sanity BEFORE divergence
 npm run bench            # p50/p95/p99 for route, snap, search -> BENCHMARKS.md
 npm run verify:browser   # console, visual, network, GPS scenarios, throttled traces
 npm run acceptance       # everything, one pass/fail table, every charter item mapped

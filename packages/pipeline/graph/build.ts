@@ -67,6 +67,8 @@ export interface Graph {
   readonly edgePrivate: Uint8Array;
   /** `CLASS_RANK` of the underlying way. 0 is the biggest road. Read only by the turn cost model. */
   readonly edgeClassRank: Uint8Array;
+  /** 1 when the underlying way charges a toll. Priced by the objective, never by the graph. */
+  readonly edgeToll: Uint8Array;
 
   /** Packed shape points, scaled by 1e7. Shape s spans shapeOffset[s]..shapeOffset[s+1]. */
   readonly shapeOffset: Int32Array;
@@ -108,6 +110,7 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
     readonly idx: Int32Array; // dense node indices, gaps already removed
     readonly speedKmh: number;
     readonly classRank: number;
+    readonly toll: boolean;
     readonly forward: boolean;
     readonly backward: boolean;
     readonly isPrivate: boolean;
@@ -164,6 +167,7 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
       idx,
       speedKmh: Math.max(1, Math.min(255, Math.round(cls.speedKmh))),
       classRank: cls.classRank,
+      toll: cls.toll,
       forward: cls.forward,
       backward: cls.backward,
       isPrivate: cls.access === 'private',
@@ -207,6 +211,7 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
   const edgeReversed: number[] = [];
   const edgePrivate: number[] = [];
   const edgeClassRank: number[] = [];
+  const edgeToll: number[] = [];
 
   const shapeOffset: number[] = [0];
   const shapeLat: number[] = [];
@@ -258,6 +263,7 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
           edgeShape.push(shapeId); edgeReversed.push(0);
           edgePrivate.push(k.isPrivate ? 1 : 0);
           edgeClassRank.push(k.classRank);
+          edgeToll.push(k.toll ? 1 : 0);
         }
         if (k.backward) {
           edgeFrom.push(b); edgeTo.push(a); edgeLengthM.push(len);
@@ -265,6 +271,7 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
           edgeShape.push(shapeId); edgeReversed.push(1);
           edgePrivate.push(k.isPrivate ? 1 : 0);
           edgeClassRank.push(k.classRank);
+          edgeToll.push(k.toll ? 1 : 0);
         }
         if (k.forward !== k.backward) onewayEdges++;
       }
@@ -332,6 +339,7 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
   const fRev: number[] = [];
   const fPriv: number[] = [];
   const fRank: number[] = [];
+  const fToll: number[] = [];
   let keptLengthM = 0;
   for (let e = 0; e < edgeFrom.length; e++) {
     const a = newVertexOf[edgeFrom[e] as number] as number;
@@ -345,6 +353,7 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
     fRev.push(edgeReversed[e] as number);
     fPriv.push(edgePrivate[e] as number);
     fRank.push(edgeClassRank[e] as number);
+    fToll.push(edgeToll[e] as number);
     keptLengthM += edgeLengthM[e] as number;
   }
 
@@ -399,6 +408,7 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
     edgeReversed: new Uint8Array(fRev),
     edgePrivate: new Uint8Array(fPriv),
     edgeClassRank: new Uint8Array(fRank),
+    edgeToll: new Uint8Array(fToll),
     shapeOffset: new Int32Array(shapeOffset),
     shapeLat: new Int32Array(shapeLat),
     shapeLon: new Int32Array(shapeLon),

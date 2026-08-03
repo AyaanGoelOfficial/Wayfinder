@@ -23,7 +23,7 @@
  * runs for heap-ordering reasons. Golden routes depend on this.
  */
 import { haversineM } from '../shared/geo.ts';
-import type { LngLat, TurnCostConfig } from '../shared/index.ts';
+import type { LngLat, ObjectiveConfig, RouteOptions, TurnCostConfig } from '../shared/index.ts';
 import { buildTurnCosts } from './turncost.ts';
 import type { TurnCosts } from './turncost.ts';
 
@@ -96,6 +96,8 @@ export interface RoutableGraph {
   readonly edgeReversed: Uint8Array;
   /** `CLASS_RANK` per edge, 0 for the biggest road. Read only by the turn cost model. */
   readonly edgeClassRank: Uint8Array;
+  /** 1 when the edge charges a toll. What that is WORTH lives in the objective, not here. */
+  readonly edgeToll: Uint8Array;
   readonly shapeOffset: Int32Array;
   readonly shapeLat: Int32Array;
   readonly shapeLon: Int32Array;
@@ -111,8 +113,23 @@ export interface Restrictions {
 export interface RouteResult {
   /** Directed edges traversed, in order. */
   readonly edges: readonly number[];
-  /** Total modelled cost: drive time plus turn penalties. This is what the search minimised. */
+  /**
+   * Total modelled cost, in seconds. This is what the search minimised, and it is NOT a duration.
+   *
+   * `seconds === driveSeconds + turnSeconds + distanceSeconds + tollSeconds`. Every component is
+   * reported separately below because they are different KINDS of number and summing them into one
+   * figure hides which preference produced the route. Anything comparing us against another
+   * router's duration wants `driveSeconds`.
+   */
   readonly seconds: number;
+  /** Pure travel time: length over speed, nothing else. The only component comparable to OSRM. */
+  readonly driveSeconds: number;
+  /** The per-kilometre distance preference charged along this route. */
+  readonly distanceSeconds: number;
+  /** The toll reluctance charged along this route. Zero when no tolled edge was used. */
+  readonly tollSeconds: number;
+  /** Metres of this route running on tolled roads. Reported so the flag can be sanity checked. */
+  readonly tollMetres: number;
   /**
    * The turn penalty portion of `seconds`, alone.
    *
@@ -183,6 +200,18 @@ export class Router {
   private readonly secs: Float64Array;
 
   /**
+   * Pure travel time per edge, with no preference terms.
+   *
+   * Kept alongside `secs` because the two answer different questions and conflating them is how a
+   * modelled cost gets reported as a duration. `secs` is what the search minimises; `driveSecs` is
+   * the only thing comparable to another router's answer.
+   */
+  private readonly driveSecs: Float64Array;
+
+  /** The objective in force. Held so per-request options can be resolved against it. */
+  private readonly obj: ObjectiveConfig;
+
+  /**
    * Turn costs, or null when the caller passed no model.
    *
    * Optional on purpose. The toy graphs the ladder is tested on have no meaningful bearings, and
@@ -196,9 +225,18 @@ export class Router {
     private readonly g: RoutableGraph,
     private readonly r: Restrictions,
     turnCost?: TurnCostConfig,
+    objective?: ObjectiveConfig,
   ) {
     const n = g.edgeFrom.length;
     this.turns = turnCost === undefined ? null : buildTurnCosts(g, turnCost);
+    // Defaulting to all-zero preferences keeps every toy-graph test asserting on pure travel time,
+    // which is what makes a failure there mean the SEARCH is wrong rather than the objective.
+    this.obj = objective ?? { secondsPerKm: 0, tollReluctanceSecondsPerKm: 0, avoidTollsByDefault: false };
+    if (this.obj.secondsPerKm < 0 || this.obj.tollReluctanceSecondsPerKm < 0) {
+      // Same reason the turn costs check: a negative preference does not fail, it silently breaks
+      // A* admissibility and returns routes that are wrong rather than routes that are missing.
+      throw new Error('OBJECTIVE costs must be non-negative or A* is no longer admissible.');
+    }
     this.stateBuf = new ArrayBuffer(n * 16);
     this.distV = new Float64Array(this.stateBuf);
     this.metaV = new Int32Array(this.stateBuf);
@@ -206,9 +244,18 @@ export class Router {
     this.heapEdge = new Int32Array(n + 1);
     this.heapCost = new Float64Array(n + 1);
     this.secs = new Float64Array(n);
+    this.driveSecs = new Float64Array(n);
+    // Per-metre so the hot loop never divides by 1000. The toll term is folded in here rather than
+    // branched on during relaxation: an edge's toll status cannot change between queries, only
+    // whether the query TOLERATES it, and that is a separate check.
+    const perM = this.obj.secondsPerKm / 1000;
+    const tollPerM = this.obj.tollReluctanceSecondsPerKm / 1000;
     this.edgesOfShape = new Map();
     for (let e = 0; e < n; e++) {
-      this.secs[e] = (g.edgeLengthM[e] as number) / ((g.edgeSpeedKmh[e] as number) * KMH_TO_MS);
+      const lenM = g.edgeLengthM[e] as number;
+      const drive = lenM / ((g.edgeSpeedKmh[e] as number) * KMH_TO_MS);
+      this.driveSecs[e] = drive;
+      this.secs[e] = drive + lenM * perM + (g.edgeToll[e] === 1 ? lenM * tollPerM : 0);
       const s = g.edgeShape[e] as number;
       const list = this.edgesOfShape.get(s);
       if (list) list.push(e);
@@ -309,8 +356,10 @@ export class Router {
     startFraction: number,
     endEdge: number,
     endFraction: number,
+    opts?: RouteOptions,
   ): RouteResult | null {
     const g = this.g;
+    const avoidTolls = opts?.avoidTolls ?? this.obj.avoidTollsByDefault;
     const gen = ++this.generation;
     this.heapSize = 0;
     let settled = 0;
@@ -359,6 +408,7 @@ export class Router {
     const csrOffset = g.csrOffset;
     const csrEdge = g.csrEdge;
     const edgeRestricted = this.r.edgeRestricted;
+    const edgeToll = g.edgeToll;
     // Hoisted like the rest. `turnSec` is indexed by (incoming edge block, slot), so the inner
     // loop reads it sequentially with the CSR cursor it is already walking: one array read per
     // relaxation, no branch, no lookup. Null when no turn model was supplied, in which case the
@@ -402,6 +452,10 @@ export class Router {
 
       for (let i = start; i < end; i++) {
         const f = csrEdge[i] as number;
+        // Excluding a tolled edge is a HARD filter, not a big penalty. "Avoid tolls" means the
+        // route must not use one; pricing it very high instead would still return a tolled route
+        // when no free one exists, which is the opposite of what the caller asked for.
+        if (avoidTolls && edgeToll[f] === 1) continue;
         if (restricted && this.forbidden(e, f, from)) {
           restrictionsApplied++;
           continue;
@@ -441,10 +495,21 @@ export class Router {
     // directed edges of the end shape the search actually arrived on.
     const endFrac = bestEnd === endA ? fracA : fracB;
     const geometry = this.buildGeometry(edges, firstFraction, endFrac);
-    let metres = 0;
-    for (const e of edges) metres += g.edgeLengthM[e] as number;
-    metres -= firstFraction * (g.edgeLengthM[firstEdge] as number);
-    metres -= (1 - endFrac) * (g.edgeLengthM[bestEnd] as number);
+    // Components are trimmed with the SAME fractions as `metres`, because the route enters the
+    // first edge partway and leaves the last partway. Summing untrimmed would charge distance and
+    // toll for road the driver never covers, and the components would stop adding up to `seconds`.
+    const sumTrimmed = (per: (e: number) => number): number => {
+      let t = 0;
+      for (const e of edges) t += per(e);
+      t -= firstFraction * per(firstEdge);
+      t -= (1 - endFrac) * per(bestEnd);
+      return t;
+    };
+    const metres = sumTrimmed((e) => g.edgeLengthM[e] as number);
+    const driveSeconds = sumTrimmed((e) => this.driveSecs[e] as number);
+    const tollMetres = sumTrimmed((e) => (g.edgeToll[e] === 1 ? (g.edgeLengthM[e] as number) : 0));
+    const distanceSeconds = (metres / 1000) * this.obj.secondsPerKm;
+    const tollSeconds = (tollMetres / 1000) * this.obj.tollReluctanceSecondsPerKm;
 
     // Recovered from the chosen path rather than accumulated during the search: the search
     // relaxes an edge many times and only the surviving parent chain is the route, so a running
@@ -471,6 +536,10 @@ export class Router {
     return {
       edges,
       seconds: bestTotal,
+      driveSeconds,
+      distanceSeconds,
+      tollSeconds,
+      tollMetres,
       turnSeconds,
       metres,
       geometry,

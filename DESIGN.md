@@ -285,6 +285,92 @@ the U-turn penalty at gate 6, and both are calibrated against this same validati
 
 ---
 
+## The objective: distance and toll preferences. Built at gate 4, DERIVED not fitted.
+
+Until this the router minimised time and NOTHING ELSE. That sounds principled and is not: with no
+tiebreaker, two routes near-tied in time can differ 37% in distance and the search returns whichever
+wins by a second. Measured case, `gautam-buddha-university to jewar`: **12.0 extra km, on a TOLL
+road, to save 2.7 minutes.** Nothing in the model objected because nothing in the model had an
+opinion about distance or tolls. A driver offered that trade declines it.
+
+**The constant is derived from a stated exchange rate, and the derivation is the point.** The
+driver-plausible boundary is about one minute saved per 2 to 3 extra km. At the 2.5 km/min midpoint
+one km is worth 60 / 2.5 = **24 seconds**. The BAND matters more than the midpoint: the landmark
+detour is penalised 4.0 min at 3 km/min, 4.8 at 2.5, and 6.0 at 2, so it loses everywhere in the
+band. `npm run experiment:objective` confirms that empirically, with 20, 24 and 30 s/km all landing
+GBU to Jewar on **-4.07%**. A number whose conclusion survives its own uncertainty is a preference;
+one that needs a specific value is a fit.
+
+| candidate | overlap | tolled km | unrouted | dist med | dist p95 | GBU to Jewar |
+|---|---|---|---|---|---|---|
+| none, time only | 75.10% | 738.2 | 0 | 2.73% | 16.98% | +37.49% |
+| dist-12, below band | 70.71% | 657.1 | 0 | 3.33% | 25.72% | +37.49% |
+| dist-20 | 75.29% | 635.5 | 0 | 2.77% | 21.33% | -4.07% |
+| dist-30 | 72.94% | 615.4 | 0 | 2.77% | 26.14% | -4.07% |
+| **shipped, 24 + 12** | **75.27%** | 548.2 | 0 | **2.20%** | 21.33% | -4.07% |
+| avoid-tolls | 54.23% | 0.0 | 0 | 5.32% | 36.32% | -4.07% |
+
+**`dist-12`, deliberately below the band, is worse than doing nothing** on every column. A weak
+distance preference perturbs routes without resolving the near-ties it exists for. That is evidence
+the band is the right region rather than a comfortable one.
+
+**Route shape held while the landmark was fixed**: overlap 75.10% to 75.27%. The landmark route went
+from 43.87 km at 58% motorway on the tolled Yamuna Expressway to **30.61 km** on NH334DD, which is
+the road OSRM takes and the road a local driver takes.
+
+**Tolls are a FLAG, not a fudge.** `toll=yes` is parsed into per-edge graph data (artifact v3),
+because whether a road charges a toll is a fact about the road; what it is WORTH is a preference and
+lives in the objective. That split is what lets one artifact serve both modes. Real toll cost is per
+trip and route dependent, so a per-edge number pretending to be rupees would be unprincipled
+precision. The default is tolls ALLOWED and priced at a reluctance of 12 s/km, half the distance
+rate, saying only that a driver treats a tolled kilometre as costing about one and a half free ones.
+`avoidTolls` per request excludes them outright, as a HARD filter rather than a large penalty: "avoid
+tolls" means the route must not use one, and a high price would still return a tolled route when no
+free one exists. It leaves **0 of 56 pairs unrouted**, so the mode never strands a destination.
+
+**A STRUCTURAL SIDE EFFECT, recorded so it is not rediscovered as a surprise.** A per-km cost is a
+larger fraction of a fast road's cost than a slow one's. At 24 s/km a motorway edge goes from 40 to
+64 s/km and a tertiary from 103 to 127, so the effective speed ratio between them compresses from
+2.57 to 1.98. The distance preference therefore also flattens the class hierarchy by about a
+quarter, and moves routes off fast roads generally, not only on the near-ties it was introduced for.
+That is arguably correct, since fuel and wear do not care how fast you are going, but it is a real
+consequence and not an intended one.
+
+**THE OBJECTIVE CHANGED WHAT A FAIR COMPARISON IS, and the diagnosis had to change with it.**
+Adding the distance term made `npm run diagnose:route` report THREE router bugs that did not exist:
+`jewar to gaur-city`, `random 15`, `random 20`. The tool compared DRIVE TIME while the router had
+started minimising drive time plus distance plus toll, so a route that deliberately gives up 1.1 min
+to save 25.5 km looked like a search failure. Two fixes: price OSRM's line under the full objective,
+and exclude turn costs from BOTH sides rather than absorbing the unpriceable term into a margin, a
+margin being just as good at hiding a real three-minute gap as a spurious one-minute one. The
+apparent 1.9 min gap on `jewar to gaur-city` is really 0.5 min inside a 1.0 min margin.
+
+This is the FOURTH instance of the same class in this project: comparing a modelled cost against a
+measurement. The others were a server boot time, a tilemaker wall time, and validation duration.
+The pattern is now explicit: **whenever the objective gains a term, every comparison against an
+external reference has to be re-derived, because the reference does not have that term.** A
+`TOO CLOSE TO CALL` verdict was added at the same time, since the old code printed "its path costs
+MORE" on pairs where it cost less but by less than the instrument could resolve.
+
+Final partition over 56 pairs with the objective in force: **33 cost model, 16 OSRM leaving the
+area, 7 too close to call, 0 router bugs, 0 graph defects.**
+
+**p95 got WORSE, 16.98% to 21.33%, and that is not being tuned away.** Thirteen pairs swung to large
+negatives: we are now much SHORTER than OSRM. Checked against the stated rule rather than against
+OSRM, all of them are correct refusals:
+
+| pair | OSRM's route is | saves, our model | km per minute saved | at 2.5 km/min |
+|---|---|---|---|---|
+| random 26 | 24.4 km longer | nothing, it is slower | n/a | decline, ours dominates |
+| random 15 | 25.5 km longer | 1.1 min | 23.2 | decline |
+| random 20 | 5.8 km longer | 1.6 min | 3.6 | decline |
+
+None is near the boundary. OSRM has no distance preference at all, so it accepts trades we refuse;
+the divergence measures that difference rather than a defect. Lowering `secondsPerKm` to recover p95
+would be fitting to OSRM by another name, which is the thing this file exists to refuse.
+
+---
+
 ## Turn costs: a gap closed, not a choice made. Built at gate 4, calibrated on the divergence set.
 
 Until this, every turn cost ZERO. That is not a modelling decision anyone took, it is a gap, and

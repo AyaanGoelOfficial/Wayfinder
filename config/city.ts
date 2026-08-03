@@ -196,6 +196,63 @@ export const ROUTE_BUDGET = {
 } as const;
 
 /**
+ * THE OBJECTIVE. What the router is actually minimising, beyond raw travel time.
+ *
+ * WHY THIS EXISTS. Until gate 4 the router minimised time and NOTHING ELSE. That sounds principled
+ * and is not: when two routes are near-tied in time there is no tiebreaker, so the search can
+ * return the one that is 37% longer and call it optimal. The measured case is
+ * `gautam-buddha-university to jewar`, where we spent 12.0 extra km, on a TOLL road, to save 2.7
+ * minutes. Nothing in the model objected, because nothing in the model had an opinion about
+ * distance or tolls. A driver offered that trade declines it.
+ *
+ * THESE ARE STATED PREFERENCES, NOT TUNED CONSTANTS, and the difference is the whole point. Each
+ * one is derived from an exchange rate a person can argue with, then CHECKED against the
+ * validation set. It is never fitted to it. Fitting these to minimise divergence from OSRM would
+ * be parity chasing wearing a different hat, and it would produce numbers nobody could defend
+ * except by pointing at the number.
+ */
+export const OBJECTIVE = {
+  /**
+   * What one extra kilometre is worth, in seconds.
+   *
+   * DERIVED FROM THE EXCHANGE RATE, not fitted. The driver-plausible boundary is roughly one
+   * minute saved per 2 to 3 extra kilometres: below that, a detour is not worth taking. At the
+   * midpoint of 2.5 km per minute, one kilometre is worth 60 / 2.5 = 24 seconds.
+   *
+   * THE BAND MATTERS MORE THAN THE MIDPOINT, and it is what makes this a preference rather than a
+   * fit. Across the whole stated band the verdict on the landmark case does not change: its 12.0
+   * km detour saving 2.7 minutes is penalised 4.0 min at 3 km/min, 4.8 min at 2.5, and 6.0 min at
+   * 2. It loses under every value in the band. A number whose conclusion survives its own
+   * uncertainty is a preference; one that needs a specific value is a fit.
+   */
+  secondsPerKm: 24,
+
+  /**
+   * What a kilometre of TOLLED road is worth on top, in seconds. Applied only when tolls are
+   * allowed, since excluding them makes the price irrelevant.
+   *
+   * A RELUCTANCE, EXPLICITLY NOT A FARE MODEL. Real toll cost is per trip and route dependent, so
+   * a per-edge number pretending to be rupees would be unprincipled precision. This says something
+   * weaker and defensible instead: a driver treats a kilometre of tolled road as costing about one
+   * and a half kilometres of free road. Half of `secondsPerKm`, so the two move together and there
+   * is one exchange rate in this file rather than two that can drift apart.
+   *
+   * The PRINCIPLED part of toll handling is the flag, not this number: see `avoidTollsByDefault`.
+   */
+  tollReluctanceSecondsPerKm: 12,
+
+  /**
+   * Whether to exclude tolled roads outright unless the caller asks for them.
+   *
+   * FALSE: tolls are allowed by default, and priced. Excluding the Yamuna Expressway from every
+   * route by default would be a hidden opinion imposed on every user, and it is the wrong default
+   * for a city whose fastest road is tolled. The caller may pass `avoidTolls` per request to
+   * exclude them entirely, which is a stated choice rather than a buried bias.
+   */
+  avoidTollsByDefault: false,
+} as const;
+
+/**
  * What a turn costs, in seconds. Applied by `packages/engine/turncost.ts`.
  *
  * WHY THIS EXISTS. Until gate 4 the router priced every turn at ZERO, which is not a modelling

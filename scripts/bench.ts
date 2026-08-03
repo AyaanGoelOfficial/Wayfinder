@@ -21,7 +21,7 @@
  */
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { BUILD_AREA, ROUTE_BUDGET, SNAP_DESTINATION_M, SNAP_TRACKING_M, TURN_COST } from '../config/city.ts';
+import { BUILD_AREA, OBJECTIVE, ROUTE_BUDGET, SNAP_DESTINATION_M, SNAP_TRACKING_M, TURN_COST } from '../config/city.ts';
 import { SnapIndex } from '../packages/engine/snap.ts';
 import { Router } from '../packages/engine/dijkstra.ts';
 import { PlacesSearch } from '../packages/engine/search.ts';
@@ -81,7 +81,7 @@ try {
   process.exit(1);
 }
 const snapIndex = new SnapIndex(artifact.graph, BUILD_AREA);
-const router = new Router(artifact.graph, artifact.restrictions, TURN_COST);
+const router = new Router(artifact.graph, artifact.restrictions, TURN_COST, OBJECTIVE);
 
 let places: { name: string; point: [number, number] }[] = [];
 try {

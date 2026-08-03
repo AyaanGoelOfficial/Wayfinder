@@ -38,7 +38,7 @@
  */
 import { writeFile, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { BUILD_AREA, SNAP_DESTINATION_M, TURN_COST } from '../config/city.ts';
+import { BUILD_AREA, OBJECTIVE, SNAP_DESTINATION_M, TURN_COST } from '../config/city.ts';
 import { ROUTING_FIXTURES } from '../config/fixtures/routing.ts';
 import { SnapIndex } from '../packages/engine/snap.ts';
 import { Router } from '../packages/engine/dijkstra.ts';
@@ -142,7 +142,7 @@ console.log('=== divergence diagnosis ===');
 const artifact = parseGraphArtifact(await readFile(resolve(DATA, 'graph.bin')));
 const g = artifact.graph;
 const snap = new SnapIndex(g, BUILD_AREA);
-const router = new Router(g, artifact.restrictions, TURN_COST);
+const router = new Router(g, artifact.restrictions, TURN_COST, OBJECTIVE);
 console.log(`  graph     ${g.edgeFrom.length.toLocaleString('en-US')} directed edges`);
 
 const lock = await readLock();
@@ -272,8 +272,13 @@ function addClass(into: Map<string, number>, cls: string, metres: number): void 
 }
 
 interface Priced {
+  /** Drive time only, from the speed table. */
   readonly seconds: number;
   readonly uncoveredM: number;
+  /** Total length, so the distance preference can be applied to this line too. */
+  readonly metres: number;
+  /** Length running on tolled edges, for the toll reluctance term. */
+  readonly tollM: number;
   readonly classes: ReadonlyMap<string, number>;
 }
 
@@ -289,12 +294,15 @@ interface Priced {
 function priceLine(coords: readonly (readonly [number, number])[]): Priced {
   let seconds = 0;
   let uncoveredM = 0;
+  let metres = 0;
+  let tollM = 0;
   const classes = new Map<string, number>();
   for (let i = 0; i + 1 < coords.length; i++) {
     const a = coords[i] as readonly [number, number];
     const b = coords[i + 1] as readonly [number, number];
     const segM = haversineM(a[1], a[0], b[1], b[0]);
     if (segM === 0) continue;
+    metres += segM;
     const mid: [number, number] = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
     const s = snap.snap(mid, 'destination', COVERAGE_SNAP_M);
     if (s === null) {
@@ -306,9 +314,32 @@ function priceLine(coords: readonly (readonly [number, number])[]): Priced {
       continue;
     }
     seconds += segM / ((g.edgeSpeedKmh[s.edgeId] as number) * KMH_TO_MS);
+    if (g.edgeToll[s.edgeId] === 1) tollM += segM;
     addClass(classes, classOfEdge(s.edgeId), segM);
   }
-  return { seconds, uncoveredM, classes };
+  return { seconds, uncoveredM, metres, tollM, classes };
+}
+
+/**
+ * A line's cost under the FULL objective, not just its drive time.
+ *
+ * THIS IS WHY THE COMPARISON HAS TO CHANGE. The router no longer minimises drive time; it
+ * minimises drive time plus the distance and toll preferences. Comparing our route's drive time
+ * against OSRM's drive time therefore asks a question the search never answered, and it flagged
+ * three pairs as router bugs that were the distance preference working exactly as specified
+ * (`random 15` gives up 1.1 min of drive time to save 25.5 km).
+ *
+ * TURN COSTS ARE OMITTED FROM OSRM'S SIDE and cannot be recovered without mapping its line onto
+ * an exact edge sequence. That omission makes OSRM's path look CHEAPER than it is, so it biases
+ * toward raising a router verdict rather than hiding one. That is the safe direction for a check
+ * whose whole job is to catch our own defects, and it is stated rather than left to be noticed.
+ */
+function fullCost(p: Priced): number {
+  return (
+    p.seconds +
+    (p.metres / 1000) * OBJECTIVE.secondsPerKm +
+    (p.tollM / 1000) * OBJECTIVE.tollReluctanceSecondsPerKm
+  );
 }
 
 /** Metres per class, biggest first, as `motorway 28.1 km (64%)`. */
@@ -437,7 +468,7 @@ for (const p of selected) {
   // caused purely by turn pricing. It can still clear the graph and the search on drive time,
   // which is what it is used for, but a ROUTER verdict here means "missed a cheaper path by drive
   // time", not "by total modelled cost".
-  const oursDriveS = ours.seconds - ours.turnSeconds;
+  const oursDriveS = ours.driveSeconds;
   const ourByMethod = priceLine(ours.geometry).seconds;
   const methodErrorS = Math.abs(ourByMethod - oursDriveS);
 
@@ -456,6 +487,10 @@ for (const p of selected) {
   let matchedSeconds = Number.NaN;
   if (tsa !== null && tsb !== null) {
     const m = router.route(tsa.edgeId, tsa.fraction, tsb.edgeId, tsb.fraction);
+    // Turns EXCLUDED from our side too, because they cannot be priced on OSRM's line. Both sides
+    // are then drive + distance + toll, which is genuinely like for like. This is better than
+    // carrying a margin to absorb the missing term: a margin hides a real 3 min gap just as
+    // readily as a spurious 1 min one, whereas excluding the term from both sides removes it.
     if (m !== null) matchedSeconds = m.seconds - m.turnSeconds;
   }
 
@@ -485,8 +520,14 @@ for (const p of selected) {
   // Uncovered metres a way-based count can never see: a road outside BUILD_AREA has no clipped
   // way at all, so it shows up as zero missing ways while the geometry says kilometres are gone.
   // That contradiction is what this branch exists to resolve.
-  // A ROUTER verdict must beat the instrument. Two times the measured self-error, floored at a
-  // minute, so a pair where the method happens to be accurate cannot pass on a few seconds.
+  // A ROUTER verdict must beat the instrument, and the instrument has THREE sources of error:
+  //
+  //   1. the measured self-error of segment-midpoint pricing, doubled;
+  //   2. a one-minute floor, so a pair where the method happens to be accurate cannot pass on a
+  //      few seconds of noise;
+  // The turn term is not in this list because it is not in EITHER side: it cannot be priced on
+  // OSRM's line, so it is excluded from ours as well rather than absorbed into a margin. Carrying
+  // a margin instead would hide a real three-minute gap as readily as a spurious one-minute one.
   const routerMargin = Math.max(60, methodErrorS * 2);
   // Coverage must be COMPLETE before the search can be blamed. A path we could not have taken is
   // not a path we failed to find, and the 10 km/h penalty on uncovered metres does not make it one.
@@ -505,16 +546,25 @@ for (const p of selected) {
       'between the clip and the graph rather than never collected.';
   } else if (Number.isNaN(matchedSeconds)) {
     rootCause = 'UNDECIDED: we could not route between OSRM\'s own endpoints, so no fair comparison exists.';
-  } else if (osrmPathOurSeconds < matchedSeconds - routerMargin) {
+  } else if (fullCost(theirPriced) < matchedSeconds - routerMargin) {
     rootCause =
-      `ROUTER: from OSRM's OWN endpoints, its path costs ${(osrmPathOurSeconds / 60).toFixed(1)} min ` +
-      `in our model and our best is ${(matchedSeconds / 60).toFixed(1)} min (instrument error ` +
+      `ROUTER: from OSRM's OWN endpoints, its path costs ${(fullCost(theirPriced) / 60).toFixed(1)} min ` +
+      `under our objective excluding turns, and our best is ${(matchedSeconds / 60).toFixed(1)} min (instrument error ` +
       `${(methodErrorS / 60).toFixed(2)} min), so the search missed a path that is in our graph.`;
+  } else if (fullCost(theirPriced) < matchedSeconds) {
+    // Cheaper, but by less than the instrument can resolve. Saying "ours costs less" here would be
+    // a plain falsehood, and saying "router bug" would be an accusation the measurement cannot
+    // support. Both are refused.
+    rootCause =
+      `TOO CLOSE TO CALL: OSRM's path prices ${(fullCost(theirPriced) / 60).toFixed(1)} min against our ` +
+      `${(matchedSeconds / 60).toFixed(1)} min, a gap of ${((matchedSeconds - fullCost(theirPriced)) / 60).toFixed(1)} min ` +
+      `inside the ${(routerMargin / 60).toFixed(1)} min instrument margin, so the two are the same answer ` +
+      'as far as this measurement can tell.';
   } else {
     rootCause =
-      `COST MODEL: we have OSRM's roads, and from its own endpoints its path costs MORE in our ` +
-      `model (${(osrmPathOurSeconds / 60).toFixed(1)} min against our ${(matchedSeconds / 60).toFixed(1)} min). ` +
-      'We chose a different road because the speed table says it is faster.';
+      `COST MODEL: we have OSRM's roads, and from its own endpoints its path costs MORE under our ` +
+      `full objective (${(fullCost(theirPriced) / 60).toFixed(1)} min against our ${(matchedSeconds / 60).toFixed(1)} min). ` +
+      'We chose a different road because our objective prefers ours.';
   }
 
   const worstWays = verdicts
@@ -528,7 +578,7 @@ for (const p of selected) {
     a: p.a,
     b: p.b,
     oursM: ours.metres,
-    oursS: ours.seconds,
+    oursS: ours.driveSeconds,
     osrmM: theirs.distance,
     osrmS: theirs.duration,
     distDelta,
@@ -548,9 +598,17 @@ for (const p of selected) {
   });
 
   console.log(`--- ${p.label}  (${(distDelta * 100).toFixed(2)}% distance delta)`);
+  // DRIVE TIME beside OSRM's duration. `ours.seconds` is total modelled cost including the
+  // distance, toll and turn preferences, and printing it next to a duration invites exactly the
+  // model-against-measurement comparison the rest of this script is careful to avoid.
   console.log(
-    `    ours  ${(ours.metres / 1000).toFixed(2)} km in ${(ours.seconds / 60).toFixed(1)} min` +
+    `    ours  ${(ours.metres / 1000).toFixed(2)} km in ${(ours.driveSeconds / 60).toFixed(1)} min drive` +
       `    osrm  ${(theirs.distance / 1000).toFixed(2)} km in ${(theirs.duration / 60).toFixed(1)} min`,
+  );
+  console.log(
+    `    our modelled cost ${(ours.seconds / 60).toFixed(1)} min = drive ${(ours.driveSeconds / 60).toFixed(1)}` +
+      ` + distance ${(ours.distanceSeconds / 60).toFixed(1)} + toll ${(ours.tollSeconds / 60).toFixed(1)}` +
+      ` + turns ${(ours.turnSeconds / 60).toFixed(1)}   (tolled: ${(ours.tollMetres / 1000).toFixed(2)} km)`,
   );
   console.log(
     `    OSRM path priced by OUR table: ${(osrmPathOurSeconds / 60).toFixed(1)} min` +
@@ -572,8 +630,8 @@ for (const p of selected) {
       `(${(ourByMethod / 60).toFixed(1)} measured against ${(oursDriveS / 60).toFixed(1)} exact drive time)`,
   );
   console.log(
-    `    our best from OSRM's OWN endpoints: ${Number.isNaN(matchedSeconds) ? 'no route' : `${(matchedSeconds / 60).toFixed(1)} min`}` +
-      `   (OSRM's line priced by us: ${(osrmPathOurSeconds / 60).toFixed(1)} min)`,
+    `    OBJECTIVE minus turns, from OSRM's OWN endpoints: ours ${Number.isNaN(matchedSeconds) ? 'no route' : `${(matchedSeconds / 60).toFixed(1)} min`}` +
+      `, OSRM's line ${(fullCost(theirPriced) / 60).toFixed(1)} min  (drive only: ${(osrmPathOurSeconds / 60).toFixed(1)})`,
   );
   console.log(`    our classes:  ${classLine(ourClasses)}`);
   console.log(`    osrm classes: ${classLine(theirClasses)}`);

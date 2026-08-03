@@ -12,10 +12,10 @@ router, not a change in the dice.
 
 | Metric | Value | Threshold | Verdict |
 |---|---|---|---|
-| Distance, median absolute delta | 2.73% | 3.00% | PASS |
-| Distance, p95 absolute delta | 16.98% | 7.00% | FAIL |
-| Duration, median absolute delta | 7.98% | reported only | n/a |
-| Duration, p95 absolute delta | 21.78% | reported only | n/a |
+| Distance, median absolute delta | 2.20% | 3.00% | PASS |
+| Distance, p95 absolute delta | 21.33% | 7.00% | FAIL |
+| Duration, median absolute delta | 8.08% | reported only | n/a |
+| Duration, p95 absolute delta | 24.54% | reported only | n/a |
 
 Compared 56 pairs (6 landmark, 50 random). Skipped 0.
 
@@ -59,75 +59,75 @@ can be looked at rather than argued about.
 
 | Pair | Ours | OSRM | Distance delta | Duration delta | Map |
 |---|---|---|---|---|---|
-| gautam-buddha-university to jewar | 43.87 km | 31.90 km | 37.49% | 15.04% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.42268%2C77.52464%3B28.20165%2C77.62654) |
-| random 5 | 95.77 km | 74.95 km | 27.79% | -0.24% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.44403%2C77.74105%3B28.27131%2C77.29718) |
+| random 26 | 41.26 km | 65.66 km | -37.16% | 10.86% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.27868%2C77.40811%3B28.21551%2C77.73140) |
+| random 15 | 56.96 km | 82.43 km | -30.90% | 16.09% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.39632%2C77.47635%3B28.10063%2C77.70228) |
+| random 6 | 48.75 km | 64.62 km | -24.56% | 20.47% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.07570%2C77.74837%3B28.25312%2C77.43960) |
 | random 18 | 18.71 km | 23.46 km | -20.25% | 7.25% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.56806%2C77.45445%3B28.61120%2C77.57805) |
-| jewar to gaur-city | 73.14 km | 63.11 km | 15.89% | 8.00% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.20165%2C77.62654%3B28.60542%2C77.42744) |
-| random 37 | 66.81 km | 58.49 km | 14.23% | -4.05% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.26473%2C77.40213%3B28.66407%2C77.42792) |
-| random 33 | 71.62 km | 82.40 km | -13.08% | 31.56% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.10370%2C77.70067%3B28.60756%2C77.65509) |
+| random 33 | 65.72 km | 82.40 km | -20.24% | 33.36% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.10370%2C77.70067%3B28.60756%2C77.65509) |
+| random 20 | 23.09 km | 28.92 km | -20.17% | 20.21% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.24734%2C77.36792%3B28.38625%2C77.26562) |
+| random 47 | 60.05 km | 67.66 km | -11.24% | 4.36% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.33013%2C77.69867%3B28.61323%2C77.28040) |
 | random 30 | 39.89 km | 35.89 km | 11.14% | 15.59% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.52758%2C77.48614%3B28.40643%2C77.75969) |
 | dadri to gautam-buddha-university | 18.68 km | 20.92 km | -10.68% | 11.27% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.53873%2C77.53722%3B28.42268%2C77.52464) |
-| random 49 | 22.70 km | 20.77 km | 9.29% | 20.00% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.61024%2C77.30111%3B28.58807%2C77.44692) |
-| random 6 | 70.60 km | 64.62 km | 9.24% | 18.35% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.07570%2C77.74837%3B28.25312%2C77.43960) |
+| random 12 | 74.77 km | 83.52 km | -10.47% | 4.63% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.20852%2C77.43392%3B28.63575%2C77.76556) |
 
 ## Every comparison
 
 | Pair | Kind | Ours km | OSRM km | Dist delta | Ours min | OSRM min | Dur delta |
 |---|---|---|---|---|---|---|---|
-| jewar to gaur-city | landmark | 73.14 | 63.11 | 15.89% | 68.6 | 63.5 | 8.00% |
+| jewar to gaur-city | landmark | 62.13 | 63.11 | -1.55% | 70.9 | 63.5 | 11.67% |
 | gaur-city to alpha-1 | landmark | 19.97 | 20.00 | -0.12% | 30.4 | 22.7 | 33.52% |
 | alpha-1 to surajpur | landmark | 7.72 | 7.71 | 0.10% | 12.1 | 9.5 | 26.97% |
 | surajpur to dadri | landmark | 7.84 | 7.99 | -1.95% | 12.7 | 10.7 | 18.67% |
 | dadri to gautam-buddha-university | landmark | 18.68 | 20.92 | -10.68% | 32.8 | 29.4 | 11.27% |
-| gautam-buddha-university to jewar | landmark | 43.87 | 31.90 | 37.49% | 48.0 | 41.7 | 15.04% |
+| gautam-buddha-university to jewar | landmark | 30.61 | 31.90 | -4.07% | 50.4 | 41.7 | 20.82% |
 | random 1 | random | 27.45 | 27.50 | -0.19% | 45.7 | 43.4 | 5.45% |
 | random 2 | random | 54.57 | 55.60 | -1.84% | 63.9 | 59.1 | 8.04% |
-| random 3 | random | 55.09 | 54.30 | 1.45% | 56.2 | 53.1 | 5.91% |
-| random 4 | random | 33.73 | 35.55 | -5.12% | 41.2 | 34.7 | 18.58% |
-| random 5 | random | 95.77 | 74.95 | 27.79% | 66.6 | 66.7 | -0.24% |
-| random 6 | random | 70.60 | 64.62 | 9.24% | 83.4 | 70.5 | 18.35% |
-| random 7 | random | 35.66 | 36.91 | -3.39% | 51.6 | 53.1 | -2.79% |
-| random 8 | random | 67.28 | 66.81 | 0.70% | 65.0 | 60.2 | 8.02% |
-| random 9 | random | 51.16 | 48.85 | 4.73% | 48.6 | 46.5 | 4.67% |
-| random 10 | random | 63.43 | 60.74 | 4.42% | 53.9 | 53.3 | 1.08% |
+| random 3 | random | 54.37 | 54.30 | 0.13% | 56.4 | 53.1 | 6.20% |
+| random 4 | random | 33.32 | 35.55 | -6.27% | 41.0 | 34.7 | 18.08% |
+| random 5 | random | 76.08 | 74.95 | 1.51% | 67.3 | 66.7 | 0.83% |
+| random 6 | random | 48.75 | 64.62 | -24.56% | 84.9 | 70.5 | 20.47% |
+| random 7 | random | 34.60 | 36.91 | -6.27% | 51.8 | 53.1 | -2.45% |
+| random 8 | random | 64.86 | 66.81 | -2.91% | 65.4 | 60.2 | 8.64% |
+| random 9 | random | 48.46 | 48.85 | -0.80% | 49.2 | 46.5 | 5.83% |
+| random 10 | random | 62.86 | 60.74 | 3.48% | 53.8 | 53.3 | 1.01% |
 | random 11 | random | 81.03 | 80.91 | 0.14% | 53.1 | 56.2 | -5.53% |
-| random 12 | random | 77.30 | 83.52 | -7.44% | 86.9 | 83.4 | 4.22% |
+| random 12 | random | 74.77 | 83.52 | -10.47% | 87.3 | 83.4 | 4.63% |
 | random 13 | random | 36.93 | 34.28 | 7.74% | 39.6 | 43.0 | -7.96% |
-| random 14 | random | 39.19 | 39.50 | -0.78% | 41.7 | 40.1 | 4.07% |
-| random 15 | random | 81.24 | 82.43 | -1.44% | 99.5 | 87.4 | 13.83% |
-| random 16 | random | 43.62 | 43.62 | 0.01% | 50.1 | 47.4 | 5.69% |
-| random 17 | random | 52.51 | 53.61 | -2.04% | 78.9 | 72.5 | 8.79% |
+| random 14 | random | 39.12 | 39.50 | -0.96% | 41.8 | 40.1 | 4.15% |
+| random 15 | random | 56.96 | 82.43 | -30.90% | 101.4 | 87.4 | 16.09% |
+| random 16 | random | 41.10 | 43.62 | -5.78% | 50.7 | 47.4 | 7.06% |
+| random 17 | random | 52.20 | 53.61 | -2.62% | 78.7 | 72.5 | 8.59% |
 | random 18 | random | 18.71 | 23.46 | -20.25% | 34.1 | 31.8 | 7.25% |
 | random 19 | random | 15.56 | 15.55 | 0.10% | 19.4 | 18.4 | 5.92% |
-| random 20 | random | 27.91 | 28.92 | -3.50% | 39.2 | 34.2 | 14.55% |
+| random 20 | random | 23.09 | 28.92 | -20.17% | 41.2 | 34.2 | 20.21% |
 | random 21 | random | 73.04 | 76.10 | -4.02% | 56.3 | 60.3 | -6.76% |
-| random 22 | random | 39.42 | 37.01 | 6.52% | 61.9 | 57.6 | 7.48% |
+| random 22 | random | 37.55 | 37.01 | 1.46% | 62.3 | 57.6 | 8.12% |
 | random 23 | random | 12.13 | 12.12 | 0.10% | 21.1 | 18.8 | 12.24% |
 | random 24 | random | 56.96 | 57.76 | -1.38% | 55.8 | 51.6 | 8.27% |
-| random 25 | random | 49.70 | 47.39 | 4.86% | 45.4 | 48.2 | -5.83% |
-| random 26 | random | 66.30 | 65.66 | 0.98% | 74.5 | 67.1 | 11.04% |
+| random 25 | random | 46.41 | 47.39 | -2.07% | 46.4 | 48.2 | -3.61% |
+| random 26 | random | 41.26 | 65.66 | -37.16% | 74.4 | 67.1 | 10.86% |
 | random 27 | random | 10.80 | 11.16 | -3.27% | 17.8 | 16.0 | 11.51% |
 | random 28 | random | 69.24 | 69.77 | -0.76% | 50.3 | 57.3 | -12.30% |
-| random 29 | random | 28.33 | 28.34 | -0.02% | 37.8 | 35.5 | 6.32% |
+| random 29 | random | 28.28 | 28.34 | -0.21% | 37.9 | 35.5 | 6.75% |
 | random 30 | random | 39.89 | 35.89 | 11.14% | 54.7 | 47.3 | 15.59% |
 | random 31 | random | 25.17 | 25.77 | -2.32% | 32.6 | 32.7 | -0.39% |
-| random 32 | random | 68.15 | 71.78 | -5.05% | 76.7 | 78.2 | -1.92% |
-| random 33 | random | 71.62 | 82.40 | -13.08% | 111.9 | 85.1 | 31.56% |
+| random 32 | random | 66.35 | 71.78 | -7.56% | 76.9 | 78.2 | -1.66% |
+| random 33 | random | 65.72 | 82.40 | -20.24% | 113.4 | 85.1 | 33.36% |
 | random 34 | random | 31.99 | 32.15 | -0.49% | 52.9 | 46.5 | 13.56% |
 | random 35 | random | 64.37 | 64.32 | 0.09% | 56.2 | 57.0 | -1.43% |
 | random 36 | random | 44.10 | 43.48 | 1.45% | 54.8 | 51.2 | 7.12% |
-| random 37 | random | 66.81 | 58.49 | 14.23% | 59.2 | 61.7 | -4.05% |
-| random 38 | random | 74.35 | 69.68 | 6.70% | 58.0 | 60.1 | -3.49% |
+| random 37 | random | 58.11 | 58.49 | -0.65% | 66.5 | 61.7 | 7.80% |
+| random 38 | random | 69.75 | 69.68 | 0.10% | 58.9 | 60.1 | -2.06% |
 | random 39 | random | 57.96 | 58.29 | -0.57% | 48.0 | 51.8 | -7.28% |
 | random 40 | random | 38.72 | 40.38 | -4.12% | 55.6 | 46.3 | 20.05% |
-| random 41 | random | 49.54 | 46.46 | 6.63% | 52.3 | 44.8 | 16.64% |
-| random 42 | random | 71.63 | 76.03 | -5.79% | 74.3 | 68.5 | 8.56% |
+| random 41 | random | 45.61 | 46.46 | -1.83% | 53.0 | 44.8 | 18.10% |
+| random 42 | random | 72.28 | 76.03 | -4.94% | 77.9 | 68.5 | 13.77% |
 | random 43 | random | 32.36 | 35.23 | -8.15% | 43.1 | 36.8 | 17.03% |
-| random 44 | random | 76.48 | 77.33 | -1.10% | 60.0 | 65.8 | -8.76% |
-| random 45 | random | 77.00 | 77.83 | -1.07% | 75.2 | 75.5 | -0.49% |
-| random 46 | random | 82.96 | 81.08 | 2.31% | 84.7 | 80.9 | 4.73% |
-| random 47 | random | 65.54 | 67.66 | -3.13% | 69.3 | 68.7 | 0.86% |
-| random 48 | random | 47.75 | 47.58 | 0.34% | 48.3 | 41.3 | 16.99% |
-| random 49 | random | 22.70 | 20.77 | 9.29% | 31.6 | 26.3 | 20.00% |
-| random 50 | random | 40.94 | 40.42 | 1.30% | 40.9 | 42.4 | -3.55% |
+| random 44 | random | 76.17 | 77.33 | -1.50% | 59.9 | 65.8 | -8.97% |
+| random 45 | random | 76.34 | 77.83 | -1.92% | 75.4 | 75.5 | -0.19% |
+| random 46 | random | 75.80 | 81.08 | -6.52% | 85.5 | 80.9 | 5.66% |
+| random 47 | random | 60.05 | 67.66 | -11.24% | 71.7 | 68.7 | 4.36% |
+| random 48 | random | 44.33 | 47.58 | -6.84% | 46.1 | 41.3 | 11.68% |
+| random 49 | random | 20.10 | 20.77 | -3.25% | 32.6 | 26.3 | 23.73% |
+| random 50 | random | 40.32 | 40.42 | -0.24% | 41.1 | 42.4 | -2.98% |
 

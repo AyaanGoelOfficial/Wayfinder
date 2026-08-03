@@ -13,7 +13,7 @@ Update this in the same change that invalidates a line in it, never as a follow-
 | 1 city build | closed. Graph, places and tiles from one merged, deduped source |
 | 2 map on screen | closed. Own PMTiles, own style, own SDF glyphs, Devanagari confirmed rendering |
 | 3 Dijkstra routing | closed. Route endpoint, client rendering, charter items 1 and 2 measured |
-| 4 OSRM validation | Diagnosed, turn costs built. Distance median **2.73%, PASSES** the 3% threshold; p95 16.98% against 7%, still fails. 0 router bugs, 0 graph defects, 16 of 56 pairs are OSRM leaving the area. `DIVERGENCE.md`, `DESIGN.md`. Open question is whether the p95 residual is accepted as a modelling difference |
+| 4 OSRM validation | Diagnosed; turn costs, distance and toll preferences all built. Distance median **2.20%, PASSES** the 3% threshold; p95 **21.33%** against 7%, fails. 0 router bugs, 0 graph defects, 16 of 56 pairs are OSRM leaving the area. p95 is worse BY DESIGN: we decline long highway detours OSRM accepts, and every one checks out against the stated exchange rate. `DIVERGENCE.md`, `DESIGN.md` |
 | 5 A\* and bidirectional | Tooling built, baseline measured, both budgets **missed**. Re-route p95 359.50 ms against 30 ms; initial p95 386.24 ms against 150 ms. See `BENCHMARKS.md`. Algorithms NOT started |
 | 6 legality pass | NOT started. The U-turn penalty is specified in `DESIGN.md` and lands here |
 | 7 search and turn-by-turn | NOT started. Places index and fuzzy search exist; instructions do not |
@@ -50,6 +50,29 @@ Update this in the same change that invalidates a line in it, never as a follow-
   values its defaults sit ABOVE the local posted limit exactly where it helps (trunk 85 against
   70, secondary 55 against 45). The locally-defensible correction makes agreement WORSE. Full
   reasoning in `DESIGN.md`; per-pair table in `DIVERGENCE.md`.
+- **The objective is no longer time alone.** A distance preference of 24 s/km, DERIVED from the
+  stated exchange rate of one minute per 2 to 3 extra km rather than fitted, plus a toll reluctance
+  of 12 s/km and an `avoidTolls` opt-in. `gautam-buddha-university to jewar` went from 43.87 km at
+  58% motorway on the tolled Yamuna Expressway to **30.61 km on NH334DD**, the road OSRM takes and
+  the road a local driver takes. Distance median 2.73% to **2.20%**, route shape overlap held at
+  75.27%. Reasoning and the full sweep in `DESIGN.md`.
+- **p95 WORSENED to 21.33% and is deliberately not tuned back.** Thirteen pairs swung to large
+  negatives because we now decline long highway detours OSRM accepts: `random 15` refuses 25.5 extra
+  km to save 1.1 min, `random 20` refuses 5.8 km to save 1.6 min. Checked against the stated
+  exchange rate, every one is a correct refusal, and none is near the boundary. OSRM has no distance
+  preference at all, so this measures a difference rather than a defect.
+- **Every comparison against an external reference must be re-derived when the objective gains a
+  term.** Adding the distance preference made the divergence tool report three router bugs that did
+  not exist, because it compared drive time while the router had started minimising drive plus
+  distance plus toll. Fourth instance of model-against-measurement in this project. Final partition
+  with the objective in force: 33 cost model, 16 outside area, 7 too close to call, **0 router bugs,
+  0 graph defects**.
+- **Road QUALITY and comfort are not modelled at all.** On the worst residuals our routes run 60 to
+  79% tertiary and unclassified. Every such trade is good by the stated exchange rate, but a driver
+  may pay a minute for 25 km of highway over 57 km of village road, and nothing in the objective
+  represents that. Nearest thing to a remaining gap.
+- **Toll data is in the graph, toll PRICE is in the objective.** 920 drivable ways carry `toll=yes`,
+  the only toll spelling present. Artifact v3. `avoidTolls` leaves 0 of 56 pairs unrouted.
 - **Turn costs now EXIST, and closing that gap moved the shape as well as the number.** Distance
   median 3.39% to **2.73%**, inside its 3% threshold for the first time, and route shape overlap
   with OSRM 70.50% to 75.10%. Both moved together, so the routes genuinely improved rather than the

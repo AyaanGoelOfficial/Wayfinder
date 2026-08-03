@@ -19,6 +19,7 @@
     "calibrate:speeds": "tsx scripts/calibrate-speeds.ts",
     "experiment:speeds": "tsx scripts/experiment-speeds.ts",
     "experiment:turns": "tsx scripts/experiment-turns.ts",
+    "experiment:objective": "tsx scripts/experiment-objective.ts",
     "bench": "tsx scripts/bench.ts",
     "verify:browser": "tsx scripts/verify-browser.ts",
     "acceptance": "tsx scripts/acceptance.ts",

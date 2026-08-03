@@ -62,6 +62,22 @@ export const CLASS_RANK: Readonly<Record<string, number>> = {
   living_street: 7, service: 7,
 };
 
+/**
+ * Whether a way charges a toll.
+ *
+ * MEASURED, not guessed at: across the 121,084 drivable ways in this clip the ONLY toll-ish key
+ * present is `toll`, and its only value is `yes`, on 920 ways. There is no `toll=no` and no
+ * `toll:motorcar`. The extra accepted spellings below cost nothing and mean a re-clip that starts
+ * carrying them does not silently stop tolling a road.
+ *
+ * This is a FACT about the way, not a cost. What a toll is worth belongs to the objective in
+ * `config/city.ts`, because it is a preference and preferences do not belong in the graph.
+ */
+export function tollOf(tags: ReadonlyMap<string, string>): boolean {
+  const v = tags.get('toll') ?? tags.get('toll:motorcar');
+  return v === 'yes' || v === 'true' || v === '1';
+}
+
 /** Not drivable by car under any tagging. Listed rather than inferred, so it is auditable. */
 const NEVER_DRIVABLE = new Set([
   'footway', 'path', 'cycleway', 'steps', 'pedestrian', 'bridleway', 'corridor',
@@ -110,6 +126,8 @@ export interface WayClassification {
   readonly speedTagged: boolean;
   /** `CLASS_RANK` of this way's highway class. 0 is the biggest road. */
   readonly classRank: number;
+  /** True when the way charges a toll. A fact about the road; its price is a preference. */
+  readonly toll: boolean;
   readonly roundabout: boolean;
 }
 
@@ -122,6 +140,7 @@ const NOT_DRIVABLE: WayClassification = {
   speedKmh: 0,
   speedTagged: false,
   classRank: 255,
+  toll: false,
   roundabout: false,
 };
 
@@ -203,6 +222,7 @@ export function classifyWay(tags: ReadonlyMap<string, string>): WayClassificatio
     speedKmh: tagged ?? classDefault,
     speedTagged: tagged !== undefined,
     classRank: CLASS_RANK[highway] ?? 5,
+    toll: tollOf(tags),
     roundabout,
   };
 }

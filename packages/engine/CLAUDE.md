@@ -14,6 +14,13 @@ which is what lets the whole ladder be tested against hand-built toy graphs.
   to a path. A heuristic that lower-bounds the turn-free remaining cost therefore still
   lower-bounds the real cost. A negative turn cost would break optimality silently, which is
   why that check is mechanical and not a review item.
+- **THE OBJECTIVE IS NOT JUST TIME, and `seconds` is NOT a duration.** `seconds` is the modelled
+  cost the search minimised: `driveSeconds + turnSeconds + distanceSeconds + tollSeconds`. Only
+  `driveSeconds` is comparable to another router's duration. Reporting `seconds` next to an OSRM
+  duration compares a model against a measurement, which has been introduced and fixed twice here.
+- **`avoidTolls` is a HARD filter, never a large penalty.** "Avoid tolls" means the route must not
+  use one; pricing tolls very high instead still returns a tolled route when no free one exists,
+  which is the opposite of what the caller asked. Returning no route is the correct answer.
 - **TURN COSTS ARE CHARGED ON THE ARC, inside relaxation.** The cost of moving from edge `e`
   to edge `f` depends on both, so it belongs in the tentative distance and competes like any
   other cost. Charging it after the fact would let a cheap arrival win on edge cost and then
