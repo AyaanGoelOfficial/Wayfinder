@@ -102,6 +102,8 @@ export interface RoutableGraph {
   readonly shapeLat: Int32Array;
   readonly shapeLon: Int32Array;
   readonly vertexLat: Float64Array;
+  /** Needed by the A\* heuristic. Present in the artifact since v1; the interface simply omitted it. */
+  readonly vertexLon: Float64Array;
 }
 
 export interface Restrictions {
@@ -221,6 +223,65 @@ export class Router {
   /** The objective in force. Held so per-request options can be resolved against it. */
   private readonly obj: ObjectiveConfig;
 
+  /** Priority of the state most recently returned by `pop`. See there for why it is needed. */
+  private poppedCost = 0;
+
+  /**
+   * THE A\* HEURISTIC RATE: the cheapest seconds per metre any edge in this graph can cost.
+   *
+   * ADMISSIBILITY PROOF, and it must be read as covering all four cost terms rather than time
+   * alone, because this objective is no longer time alone.
+   *
+   * The heuristic is `h(e) = greatCircle(head(e), target) * hSecondsPerM`. Take any real path P
+   * from `head(e)` to the target point, of length `L` metres. Then:
+   *
+   *   cost(P) = drive(P) + distance(P) + toll(P) + turns(P)
+   *
+   *   drive(P)    = sum over edges of len/speed  >=  L / vMax          vMax is the fastest edge
+   *                                                                   speed present in the graph,
+   *                                                                   measured here, not assumed
+   *   distance(P) = sum of len * k * quality     >=  L * k * minQuality   k = secondsPerKm/1000
+   *   toll(P)     >= 0                           tolls are priced, never credited
+   *   turns(P)    >= 0                           every TURN_COST term is non-negative, enforced
+   *                                              mechanically at construction
+   *
+   *   so  cost(P) >= L * (1/vMax + k*minQuality) = L * hSecondsPerM >= greatCircle * hSecondsPerM
+   *
+   * the last step because a great circle is the shortest path between two points on the sphere,
+   * so `L >= greatCircle(head(e), target)` for every P. Therefore `h` never exceeds the true
+   * remaining cost, which is admissibility.
+   *
+   * IT IS ALSO CONSISTENT, which is what licenses settling a state once and never revisiting it.
+   * `h` is `hSecondsPerM` times a metric, so `|h(u) - h(v)| <= greatCircle(u,v) * hSecondsPerM`
+   * by the triangle inequality, while the arc cost `c(u,v) >= len(u,v) * hSecondsPerM >=
+   * greatCircle(u,v) * hSecondsPerM` by the same bound as above. So `h(u) <= c(u,v) + h(v)`.
+   *
+   * THE TWO PLACES THIS WOULD SILENTLY BREAK, both guarded rather than trusted:
+   *   1. A NEGATIVE term anywhere in the objective. Then the bounds above stop holding and A\*
+   *      returns wrong routes rather than no routes. `assertNonNegative` and the constructor
+   *      checks make that a throw instead.
+   *   2. Including the DISTANCE term in `h` but forgetting `minQuality`. Using `k` alone would
+   *      overestimate on motorway, where quality is 0.30, and overestimating is inadmissible.
+   *
+   * Including the distance term at all is optional for correctness and worth it for speed: it
+   * makes `h` tighter, so fewer states get settled, and it stays a lower bound because it uses
+   * the minimum quality weight rather than the route's actual one.
+   */
+  private readonly hSecondsPerM: number;
+
+  /**
+   * `h` memoised per VERTEX, with the same generation-counter trick as the search state.
+   *
+   * MEASURED, not preemptive. The first cut evaluated the heuristic on every push, which is once
+   * per relaxation, and the benchmark showed nanoseconds per settled state rising from 507 to 714
+   * on initial routes. On the long queries that set p95 A\* prunes almost nothing, so that overhead
+   * was a straight 41% loss with no saving to pay for it. A vertex's heuristic cannot change during
+   * a query, and a vertex is relaxed many times, so caching turns O(relaxations) haversines into
+   * O(vertices touched).
+   */
+  private readonly hCache: Float64Array;
+  private readonly hStamp: Int32Array;
+
   /**
    * Turn costs, or null when the caller passed no model.
    *
@@ -283,6 +344,21 @@ export class Router {
       if (list) list.push(e);
       else this.edgesOfShape.set(s, [e]);
     }
+
+    // MEASURED from the graph, never taken from `CLASS_SPEED_KMH`. A `maxspeed` tag can exceed
+    // every class default, and a heuristic built on a speed the graph can beat is inadmissible.
+    let vMaxKmh = 1;
+    for (let e = 0; e < n; e++) {
+      const s = g.edgeSpeedKmh[e] as number;
+      if (s > vMaxKmh) vMaxKmh = s;
+    }
+    // Likewise the SMALLEST quality weight, since that is the cheapest a metre of distance
+    // preference can be charged. `?? 1` for ranks the table does not cover, so the minimum is
+    // taken against 1 as well.
+    const minQuality = quality === undefined ? 1 : Math.min(1, ...quality);
+    this.hSecondsPerM = 1 / (vMaxKmh * KMH_TO_MS) + (this.obj.secondsPerKm * minQuality) / 1000;
+    this.hCache = new Float64Array(g.vertexLat.length);
+    this.hStamp = new Int32Array(g.vertexLat.length);
   }
 
   // push and pop hoist `this.heapEdge` / `this.heapCost` into locals for the same reason the
@@ -314,6 +390,10 @@ export class Router {
     const he = this.heapEdge;
     const hc = this.heapCost;
     const top = he[1] as number;
+    // The PRIORITY of the state just popped, recorded because the termination test needs it and it
+    // is not recoverable afterwards. Under Dijkstra this equals `dist[top]`; under A* it is
+    // `dist[top] + h(top)`, and using `dist` there would stop the search on the wrong quantity.
+    this.poppedCost = hc[1] as number;
     he[1] = he[this.heapSize] as number;
     hc[1] = hc[this.heapSize] as number;
     const size = --this.heapSize;
@@ -407,6 +487,47 @@ export class Router {
     const fracA = endFraction;
     const fracB = 1 - endFraction;
 
+    // THE HEURISTIC TARGET IS THE SNAPPED POINT, not the end edge's far vertex.
+    //
+    // This matters and is easy to get wrong. `dist[e]` is the cost of reaching the FAR end of `e`,
+    // and a route finishing on the end edge gets the unused tail refunded. A heuristic aimed at a
+    // vertex would therefore bound a quantity the search never pays. Aiming at the point itself
+    // makes `h` a bound on exactly what remains to be paid, refund included, because any path must
+    // physically reach that point.
+    const useAStar = (opts?.algorithm ?? 'dijkstra') === 'astar';
+    let targetLat = 0;
+    let targetLon = 0;
+    if (useAStar) {
+      const pts = clipPolyline(this.shapeInTravelOrder(endEdge), 0, endFraction);
+      const t = pts[pts.length - 1] as LngLat;
+      targetLon = t[0];
+      targetLat = t[1];
+    }
+    const hRate = this.hSecondsPerM;
+    const vertexLat = g.vertexLat;
+    const vertexLon = g.vertexLon;
+    /**
+     * Zero on the two end edges, deliberately. The goal lies partway ALONG them, so the remaining
+     * cost from their far vertex is a refund rather than a payment and no positive bound is valid
+     * there. Zero always is. It costs nothing: those two states are the ones the search is trying
+     * to reach, so relaxing their priority can only make them pop sooner.
+     */
+    const hCache = this.hCache;
+    const hStamp = this.hStamp;
+    const h = (e: number): number => {
+      if (!useAStar) return 0;
+      // The end-edge test stays OUTSIDE the cache deliberately. It is a property of the edge, not
+      // of its head vertex, and other edges can share that vertex; caching a zero against the
+      // vertex would hand it to them and quietly make the heuristic useless near the goal.
+      if (e === endA || e === endB) return 0;
+      const v = g.edgeTo[e] as number;
+      if (hStamp[v] !== gen) {
+        hStamp[v] = gen;
+        hCache[v] = haversineM(vertexLat[v] as number, vertexLon[v] as number, targetLat, targetLon) * hRate;
+      }
+      return hCache[v] as number;
+    };
+
     const startShape = g.edgeShape[startEdge] as number;
     for (const se of this.edgesOfShape.get(startShape) ?? [startEdge]) {
       const frac = se === startEdge ? startFraction : 1 - startFraction;
@@ -414,7 +535,7 @@ export class Router {
       this.distV[se * 2] = remaining;
       this.metaV[se * 4 + 2] = -1;
       this.metaV[se * 4 + 3] = gen;
-      this.push(se, remaining);
+      this.push(se, remaining + h(se));
     }
 
     let bestEnd = -1;
@@ -440,6 +561,7 @@ export class Router {
 
     while (this.heapSize > 0) {
       const e = this.pop();
+      const poppedCost = this.poppedCost;
       if (settledStamp[e] === gen) continue;
       settledStamp[e] = gen;
       settled++;
@@ -461,9 +583,11 @@ export class Router {
           }
         }
       }
-      // Everything still queued costs at least `de`, so once the best completion is cheaper
-      // than the frontier there is nothing left that can improve it.
-      if (bestEnd !== -1 && de >= bestTotal) break;
+      // Everything still queued has priority at least `poppedCost`, and priority lower-bounds the
+      // total cost of any route completed through that state, so once the best completion is
+      // cheaper than the frontier there is nothing left that can improve it. Under Dijkstra
+      // `poppedCost` IS `de`, so this is the identical test the plain rung has always run.
+      if (bestEnd !== -1 && poppedCost >= bestTotal) break;
 
       const v = edgeTo[e] as number;
       const from = metaV[e * 4 + 2] as number;
@@ -493,11 +617,11 @@ export class Router {
           metaV[m + 3] = gen;
           distV[f * 2] = nd;
           metaV[m + 2] = e;
-          this.push(f, nd);
+          this.push(f, nd + h(f));
         } else if (nd < (distV[f * 2] as number)) {
           distV[f * 2] = nd;
           metaV[m + 2] = e;
-          this.push(f, nd);
+          this.push(f, nd + h(f));
         }
       }
     }

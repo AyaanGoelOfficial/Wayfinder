@@ -14,7 +14,7 @@ Update this in the same change that invalidates a line in it, never as a follow-
 | 2 map on screen | closed. Own PMTiles, own style, own SDF glyphs, Devanagari confirmed rendering |
 | 3 Dijkstra routing | closed. Route endpoint, client rendering, charter items 1 and 2 measured |
 | 4 OSRM validation | **CLOSED** as a documented modelling difference, thresholds untouched. Distance median **3.33%** against 3% and p95 **25.26%** against 7%, both fail as raw numbers. 0 router bugs, 0 graph defects; 39 cost model, 16 OSRM leaving the area, 1 too close to call, every pair named in `VALIDATION.md`. The residual is three stated preferences OSRM does not have: a locally calibrated speed table, a distance-and-quality preference, and a toll priced from the published tariff. Acceptance paragraph and reasoning in `DESIGN.md` |
-| 5 A\* and bidirectional | Tooling built, baseline measured, both budgets **missed**. Re-route p95 359.50 ms against 30 ms; initial p95 386.24 ms against 150 ms. See `BENCHMARKS.md`. Algorithms NOT started |
+| 5 A\* and bidirectional | **A\* built and proved equal to Dijkstra**; `npm run gate:equality` routes all 39 via-node pair sites and all 12 via-way sites plus landmarks and breadth, 190 pairs, **0 mismatches on path AND cost**. Settled states cut 34.5% on re-routes, 53.3% on landmarks, 0.2% on initial routes. **Budgets cannot currently be judged: wall time on this machine is contaminated**, see below. Bidirectional NOT started |
 | 6 legality pass | NOT started. The U-turn penalty is specified in `DESIGN.md` and lands here |
 | 7 search and turn-by-turn | NOT started. Places index and fuzzy search exist; instructions do not |
 | 8 tracking | NOT started. Must not start before the U-turn penalty lands |
@@ -36,10 +36,26 @@ Update this in the same change that invalidates a line in it, never as a follow-
   largest-SCC filtering, from 1,893,860 deduped in-area nodes. That is an order of magnitude
   below the ~10^6 feared. CH still gets decided at gate 5 on measured p95 route compute under
   30 ms, not on this count, but nothing about this scale suggests it will be needed.
-- **Both routing budgets are missed, measured properly.** Re-route p95 **359.50 ms** against 30 ms;
-  initial-route p95 **386.24 ms** against 150 ms. Re-route p50 is 43.72 ms, so the distribution is
-  easier on average and its p95 is set by early-trip long re-routes, which are in the sample on
-  purpose. `npm run bench`, `BENCHMARKS.md`.
+- **THE ROUTING BUDGETS CANNOT BE JUDGED RIGHT NOW, and the blocker is the instrument, not the
+  router.** Three consecutive `npm run bench` runs of UNMODIFIED Dijkstra reported initial-route p95
+  of 284, 1829 and 1674 ms, while snap and search moved fivefold on code paths that were not touched
+  at all. The derived "time saved by A\*" column read +37.2%, then -4.3%, then -278.6% for identical
+  code. Settled counts were identical to the digit across all three. Third instance of this
+  contamination class here, after the server boot time and the tilemaker wall time. `timeIt` now
+  takes the MINIMUM of its repeats rather than the median, since interference is one-sided, and
+  `bench` prints a LOAD CANARY (observed/best) that labels the whole run as an upper bound when the
+  machine was busy. The last run canaried at 1.25, so its numbers are not quoted anywhere.
+  **Re-run on an idle machine before accepting or rejecting either budget.**
+- **A\* settles 34.5% fewer states on re-routes and 0.2% fewer on initial routes.** The initial-route
+  figure is not a disappointment, it is the geometry: the p95 of that sample is set by the four
+  pinned corner-to-corner queries, where the destination is at the far corner of the build area and
+  almost the whole graph genuinely lies between. A heuristic cannot prune what is on the way.
+  Landmarks, which are real city-scale trips, cut 53.3%.
+- **The A\* heuristic must be memoised per vertex, and this was found by measurement.** Evaluating it
+  on every push means a haversine per relaxation; on the long queries where A\* prunes nothing that is
+  pure overhead. It is now cached per vertex behind the same generation counter as the search state,
+  turning O(relaxations) haversines into O(vertices touched). **The benefit is UNVERIFIED by timing**,
+  because of the contamination above; the argument for it is structural.
 - **Gate 4 divergence is the SPEED TABLE, and nothing else.** Investigated pair by pair with
   `npm run diagnose:route -- --all`: 40 of 56 pairs are cost model, 16 are OSRM leaving
   `BUILD_AREA`, and **0 are router bugs, 0 are graph defects**. The search was cleared by routing

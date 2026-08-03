@@ -22,6 +22,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { BUILD_AREA, OBJECTIVE, ROUTE_BUDGET, SNAP_DESTINATION_M, SNAP_TRACKING_M, TURN_COST } from '../config/city.ts';
+import type { RoutingAlgorithm } from '../packages/shared/index.ts';
 import { SnapIndex } from '../packages/engine/snap.ts';
 import { Router } from '../packages/engine/dijkstra.ts';
 import { PlacesSearch } from '../packages/engine/search.ts';
@@ -31,6 +32,11 @@ const DATA = resolve(import.meta.dirname, '../data');
 const SEED = 20260731;
 const INITIAL_SAMPLES = 60;
 const REROUTE_SAMPLES = 60;
+
+/** Every rung, benchmarked over the identical queries. `gate:equality` proves they agree. */
+const ALGORITHMS: readonly RoutingAlgorithm[] = ['dijkstra', 'astar'];
+/** The rung the server actually serves, and therefore the one the budgets are judged against. */
+const SHIPPED_ALGORITHM: RoutingAlgorithm = 'astar';
 const SEARCH_QUERIES = ['Pari Chowk', 'Knowledge Park', 'Kasna', 'Gaur City', 'Surajpur', 'Jewar', 'Dadri', 'Nolej Park'];
 
 function rng(seed: number): () => number {
@@ -173,44 +179,96 @@ for (let pass = 0; pass < 2; pass++) {
   }
 }
 
-const timeIt = (fn: () => void, repeats = 3): number => {
-  const runs: number[] = [];
+/**
+ * MINIMUM of the repeats, not the median. This changed after the median was caught lying.
+ *
+ * Interference is one-sided: another process can only ever make a run SLOWER, never faster. So the
+ * minimum is the best available estimate of what the work costs when nothing is competing, while
+ * the median tracks whatever else the machine was doing. Measured, on this repo, three consecutive
+ * runs of UNMODIFIED Dijkstra reported initial-route p95 of 284, 1829 and 1674 ms, and the derived
+ * "time saved by A\*" column read +37.2%, then -4.3%, then -278.6%. Same code every time. That is
+ * the same contamination already recorded for tilemaker wall time in `PROGRESS.md`, and a median
+ * over three repeats did nothing to stop it.
+ *
+ * The minimum is not a fix for a loaded machine, only a much better estimator on one. `spread` below
+ * reports how far the repeats disagreed, so a run taken under load says so instead of looking
+ * authoritative.
+ */
+// Accumulators for the load canary. Total time actually observed against the total the best-of
+// estimate implies. On a quiet machine the ratio is near 1; well above it means the run competed
+// for the machine and every wall-clock number below should be treated as an upper bound.
+let observedTotalMs = 0;
+let bestTotalMs = 0;
+
+const timeIt = (fn: () => void, repeats = 5): number => {
+  let best = Infinity;
   for (let i = 0; i < repeats; i++) {
     const t = performance.now();
     fn();
-    runs.push(performance.now() - t);
+    const d = performance.now() - t;
+    if (d < best) best = d;
+    observedTotalMs += d;
   }
-  runs.sort((a, b) => a - b);
-  return runs[Math.floor(runs.length / 2)] as number;
+  bestTotalMs += best * repeats;
+  return best;
 };
 
-const initialMs: number[] = [];
-const initialDetail: { label: string; km: number; ms: number }[] = [];
-for (const q of initialQueries) {
-  const sa = snapIndex.snap(q.a, 'destination', SNAP_DESTINATION_M);
-  const sb = snapIndex.snap(q.b, 'destination', SNAP_DESTINATION_M);
-  if (sa === null || sb === null) continue;
-  let km = 0;
-  const t = timeIt(() => {
-    const r = router.route(sa.edgeId, sa.fraction, sb.edgeId, sb.fraction);
-    km = r === null ? 0 : r.metres / 1000;
-  });
-  if (km === 0) continue;
-  initialMs.push(t);
-  initialDetail.push({ label: q.label, km, ms: t });
+/**
+ * SETTLED NODES ARE RECORDED BESIDE WALL TIME, per rung, and that pairing is the point.
+ *
+ * Wall time alone says a rung got faster; it does not say why, and on a machine that is also
+ * running a browser it does not reliably say even that. Settled counts are deterministic: the same
+ * query settles the same number of states every run, so a change there is a change in the SEARCH
+ * rather than in the weather. Reporting them together is also the only way to test the prediction
+ * that motivated A\* here, which is that nanoseconds per settle RISE with working-set size, so
+ * cutting settled nodes should buy back more than its share of the time.
+ */
+interface Sample { label: string; km: number; ms: number; settled: number; relaxed: number }
+
+const initialByAlg = new Map<RoutingAlgorithm, Sample[]>();
+const rerouteByAlg = new Map<RoutingAlgorithm, Sample[]>();
+
+for (const algorithm of ALGORITHMS) {
+  const iOut: Sample[] = [];
+  for (const q of initialQueries) {
+    const sa = snapIndex.snap(q.a, 'destination', SNAP_DESTINATION_M);
+    const sb = snapIndex.snap(q.b, 'destination', SNAP_DESTINATION_M);
+    if (sa === null || sb === null) continue;
+    let km = 0;
+    let settled = 0;
+    let relaxed = 0;
+    const t = timeIt(() => {
+      const r = router.route(sa.edgeId, sa.fraction, sb.edgeId, sb.fraction, { algorithm });
+      km = r === null ? 0 : r.metres / 1000;
+      settled = r === null ? 0 : r.settled;
+      relaxed = r === null ? 0 : r.relaxed;
+    });
+    if (km === 0) continue;
+    iOut.push({ label: q.label, km, ms: t, settled, relaxed });
+  }
+  initialByAlg.set(algorithm, iOut);
+
+  const rOut: Sample[] = [];
+  for (const q of rerouteQueries) {
+    let ok = false;
+    let settled = 0;
+    let relaxed = 0;
+    const t = timeIt(() => {
+      const r = router.route(q.startEdge, q.startFraction, q.endEdge, q.endFraction, { algorithm });
+      ok = r !== null;
+      settled = r === null ? 0 : r.settled;
+      relaxed = r === null ? 0 : r.relaxed;
+    });
+    if (!ok) continue;
+    rOut.push({ label: q.label, km: q.remainingKm, ms: t, settled, relaxed });
+  }
+  rerouteByAlg.set(algorithm, rOut);
 }
 
-const rerouteMs: number[] = [];
-const rerouteDetail: { label: string; km: number; ms: number }[] = [];
-for (const q of rerouteQueries) {
-  let ok = false;
-  const t = timeIt(() => {
-    ok = router.route(q.startEdge, q.startFraction, q.endEdge, q.endFraction) !== null;
-  });
-  if (!ok) continue;
-  rerouteMs.push(t);
-  rerouteDetail.push({ label: q.label, km: q.remainingKm, ms: t });
-}
+const initialDetail = initialByAlg.get(SHIPPED_ALGORITHM) as Sample[];
+const rerouteDetail = rerouteByAlg.get(SHIPPED_ALGORITHM) as Sample[];
+const initialMs = initialDetail.map((s) => s.ms);
+const rerouteMs = rerouteDetail.map((s) => s.ms);
 
 // Snap, both radii, since they are different code paths and conflating them hides a regression.
 const snapDestMs: number[] = [];
@@ -249,15 +307,91 @@ line('snap, destination', snapDest);
 line('snap, tracking', snapTrack);
 line('search', searchDist);
 
+// --- the ladder, and the prediction it was built to test ---------------------------------------
+//
+// PREDICTION UNDER TEST: profiling at gate 3 showed nanoseconds per settled state RISING with
+// working-set size, which is a cache effect rather than an algorithmic one. If that holds, cutting
+// settled states should buy back MORE than its share of wall time, so the time saved should exceed
+// the states saved. If it does not, the memory model is doing something not yet characterised and
+// this table is the thing that says so. Reported either way.
+const ladder = (
+  name: string,
+  byAlg: Map<RoutingAlgorithm, Sample[]>,
+): string[] => {
+  const out: string[] = [];
+  out.push('');
+  out.push(`  ${name}`);
+  out.push(
+    `    ${'rung'.padEnd(11)}${'p50 ms'.padStart(9)}${'p95 ms'.padStart(9)}${'settled p95'.padStart(14)}` +
+      `${'ns/settle'.padStart(12)}${'states cut'.padStart(12)}${'time cut'.padStart(10)}`,
+  );
+  const base = byAlg.get('dijkstra') as Sample[];
+  const baseTime = summarise(base.map((s) => s.ms));
+  const baseSettled = summarise(base.map((s) => s.settled));
+  for (const a of ALGORITHMS) {
+    const rows = byAlg.get(a) as Sample[];
+    const t = summarise(rows.map((s) => s.ms));
+    const st = summarise(rows.map((s) => s.settled));
+    // Per-query rather than per-percentile: dividing a p95 time by a p95 settle count divides two
+    // different queries by each other, which is a number that looks meaningful and is not.
+    const perSettle = rows.reduce((acc, s) => acc + (s.settled === 0 ? 0 : (s.ms * 1e6) / s.settled), 0) / rows.length;
+    const statesCut = baseSettled.p95 === 0 ? 0 : ((baseSettled.p95 - st.p95) / baseSettled.p95) * 100;
+    const timeCut = baseTime.p95 === 0 ? 0 : ((baseTime.p95 - t.p95) / baseTime.p95) * 100;
+    out.push(
+      `    ${a.padEnd(11)}${ms(t.p50).padStart(9)}${ms(t.p95).padStart(9)}${Math.round(st.p95).toLocaleString('en-US').padStart(14)}` +
+        `${perSettle.toFixed(0).padStart(12)}${`${statesCut.toFixed(1)}%`.padStart(12)}${`${timeCut.toFixed(1)}%`.padStart(10)}`,
+    );
+  }
+  return out;
+};
+
+const ladderLines = [...ladder('initial route', initialByAlg), ...ladder('re-route', rerouteByAlg)];
+for (const l of ladderLines) console.log(l);
+
+const loadFactor = bestTotalMs === 0 ? 1 : observedTotalMs / bestTotalMs;
+const quiet = loadFactor < 1.15;
+console.log(
+  `\n  LOAD CANARY  observed/best = ${loadFactor.toFixed(2)}  ${
+    quiet ? 'machine was quiet, wall times are usable' : 'MACHINE WAS BUSY, treat every wall time above as an upper bound'
+  }`,
+);
+console.log('  Settled counts are deterministic and unaffected by load. When these disagree, believe them.');
+
 const worstReroute = [...rerouteDetail].sort((a, b) => b.ms - a.ms).slice(0, 5);
 const worstInitial = [...initialDetail].sort((a, b) => b.ms - a.ms).slice(0, 5);
 
 const md = [
   '# Benchmarks',
   '',
-  'Generated by `npm run bench` on an otherwise idle machine. Timing under concurrent load is not',
-  'a measurement: this project has recorded a server boot at 89 s that was 2.87 s alone, and a',
-  'tilemaker run at 2,425 s that was 18 s alone.',
+  'Generated by `npm run bench`. Timing under concurrent load is not a measurement: this project has',
+  'recorded a server boot at 89 s that was 2.87 s alone, and a tilemaker run at 2,425 s that was 18 s',
+  'alone.',
+  '',
+  `## LOAD CANARY: observed/best = ${loadFactor.toFixed(2)}`,
+  '',
+  ...(quiet
+    ? ['The repeats agreed closely, so the machine was quiet and the wall times below are usable.']
+    : [
+        '**THE MACHINE WAS BUSY DURING THIS RUN. Every wall-clock number in this file is an upper',
+        'bound and the comparisons between rungs are not reliable.** Re-run on an idle machine before',
+        'drawing any conclusion about latency from it.',
+        '',
+        'This is not a hypothetical. Three consecutive runs of UNMODIFIED Dijkstra reported',
+        'initial-route p95 of 284, 1829 and 1674 ms, and the derived "time saved by A\\*" column read',
+        '+37.2%, then -4.3%, then -278.6% for identical code. `timeIt` now takes the MINIMUM of its',
+        'repeats rather than the median, because interference is one-sided and can only make a run',
+        'slower, but a minimum is a better estimator on a loaded machine and not a cure for one.',
+      ]),
+  '',
+  '**SETTLED-STATE COUNTS ARE DETERMINISTIC AND UNAFFECTED BY LOAD.** The same query settles the',
+  'same number of states on every run, verified across the runs above where they were identical to',
+  'the digit while wall times moved sixfold. Where the two disagree, believe the counts.',
+  '',
+  '## The ladder, per rung',
+  '',
+  '```',
+  ...ladderLines,
+  '```',
   '',
   '## Route latency, against the two budgets',
   '',

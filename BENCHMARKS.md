@@ -12,11 +12,11 @@ start, off the interaction path. `config/city.ts` holds both and explains the sp
 
 | Operation | n | p50 | p95 | p99 | max | Budget (p95) | Verdict |
 |---|---|---|---|---|---|---|---|
-| Route, re-route | 60 | 43.72 | **359.50** | 429.28 | 471.92 | 30 ms | FAIL |
-| Route, initial | 60 | 279.02 | **386.24** | 419.66 | 419.82 | 150 ms | FAIL |
-| Snap, destination (500 m) | 200 | 0.03 | 0.14 | 0.26 | 0.28 | none | n/a |
-| Snap, tracking (40 m) | 200 | 0.03 | 0.14 | 0.27 | 0.30 | none | n/a |
-| Search | 40 | 8.85 | 14.34 | 18.51 | 18.75 | none yet | n/a |
+| Route, re-route | 60 | 45.16 | **1401.85** | 2358.23 | 2715.42 | 30 ms | FAIL |
+| Route, initial | 60 | 129.87 | **1045.25** | 2464.05 | 2734.95 | 150 ms | FAIL |
+| Snap, destination (500 m) | 200 | 0.22 | 0.92 | 1.46 | 1.65 | none | n/a |
+| Snap, tracking (40 m) | 200 | 0.22 | 0.89 | 1.28 | 1.61 | none | n/a |
+| Search | 40 | 33.19 | 128.48 | 140.35 | 142.73 | none yet | n/a |
 
 ## How the samples were drawn
 
@@ -25,7 +25,7 @@ This is the part that decides whether the numbers above mean anything.
 **Re-route (60 samples).** Origins are points part way along REAL computed routes,
 with the destination being that route's real remaining endpoint, sampled uniformly over the
 whole trip rather than near the end. Remaining distance in this run spans
-1.0 to 75.9 km.
+1.4 to 84.4 km.
 A driver who deviates early into a long trip produces a nearly-full-length re-route, so those
 are in the distribution and are expected to set p95.
 
@@ -37,19 +37,19 @@ permanently; they are the worst case and cannot be argued out of it.
 
 | Case | Remaining km | ms |
 |---|---|---|
-| reroute 43 | 67.9 | 471.92 |
-| reroute 23 | 68.1 | 399.65 |
-| reroute 1 | 46.0 | 361.81 |
-| reroute 45 | 37.7 | 359.38 |
-| reroute 27 | 61.6 | 346.06 |
+| reroute 32 | 75.1 | 2715.42 |
+| reroute 43 | 67.9 | 2110.02 |
+| reroute 28 | 50.4 | 1581.46 |
+| reroute 47 | 33.9 | 1392.39 |
+| reroute 54 | 51.5 | 773.25 |
 
 ## Slowest initial routes
 
 | Case | km | ms |
 |---|---|---|
-| random 33 | 72.3 | 419.82 |
-| random 12 | 77.3 | 419.54 |
-| corner NE to SW | 109.6 | 400.30 |
-| random 15 | 80.4 | 385.50 |
-| random 26 | 41.1 | 376.20 |
+| corner SW to NE | 109.8 | 2734.95 |
+| corner NW to SE | 102.8 | 2275.80 |
+| corner NE to SW | 127.6 | 2099.31 |
+| corner SE to NW | 100.3 | 989.77 |
+| random 52 | 73.2 | 345.30 |
 

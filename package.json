@@ -35,6 +35,7 @@
     "gate:copy": "tsx scripts/gate-copy.ts",
     "gate:mutation": "tsx scripts/gate-compound-assign.ts",
     "gate:fixtures": "tsx scripts/gate-fixtures.ts",
+    "gate:equality": "tsx scripts/gate-equality.ts",
     "gate:oracle": "tsx scripts/gate-oracle.ts",
     "profile:route": "tsx scripts/profile-route.ts"
   },

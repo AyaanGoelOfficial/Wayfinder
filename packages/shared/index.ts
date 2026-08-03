@@ -73,10 +73,21 @@ export interface ObjectiveConfig {
   readonly avoidTollsByDefault: boolean;
 }
 
+/**
+ * Which rung of the routing ladder to run.
+ *
+ * NOT a quality knob. Every rung must return the IDENTICAL route, within 1e-6 on cost; they differ
+ * only in how much of the graph they settle to find it. The option exists so the equality suite can
+ * run two rungs over one graph and diff them, and so a regression can be bisected to a rung.
+ */
+export type RoutingAlgorithm = 'dijkstra' | 'astar';
+
 /** Per-request overrides of the objective. Everything omitted falls back to the config. */
 export interface RouteOptions {
   /** Exclude tolled roads from the search entirely. A stated choice, never a hidden default. */
   readonly avoidTolls?: boolean;
+  /** Defaults to `dijkstra`, the definition of correct in this package. */
+  readonly algorithm?: RoutingAlgorithm;
 }
 
 export interface TurnCostConfig {

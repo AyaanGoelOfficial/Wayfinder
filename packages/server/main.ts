@@ -251,7 +251,10 @@ app.get<{ Querystring: { from?: string; to?: string } }>(ROUTES.route, async (re
   }
 
   const tRoute = performance.now();
-  const r = router.route(a!.edgeId, a!.fraction, b!.edgeId, b!.fraction);
+  // A\*, not Dijkstra. Not a quality choice: `npm run gate:equality` proves the two return the
+  // identical path and cost on every restriction site in the graph, so this only decides how much
+  // of the graph gets settled on the way to the same answer.
+  const r = router.route(a!.edgeId, a!.fraction, b!.edgeId, b!.fraction, { algorithm: 'astar' });
   const routeMs = performance.now() - tRoute;
   if (r === null) {
     return reply.code(404).send({

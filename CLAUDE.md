@@ -79,6 +79,7 @@ Cross-checks that need the built artifacts, so they are NOT part of `npm run gat
 
 ```bash
 npm run gate:fixtures    # frozen routing + search fixtures, held-out queries, restriction enforcement
+npm run gate:equality    # every rung vs Dijkstra through EVERY restriction site. Path and cost, 1e-6
 npm run gate:oracle      # places index vs pyosmium. ~6 min, cached on the extract md5s
 npm run gate:oracle -- --full   # ALSO re-derives the clip from raw extracts. 993 s, has passed
 npm run profile:route    # settled/relaxed counts beside wall time, for the gate 5 ladder
