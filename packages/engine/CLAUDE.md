@@ -18,6 +18,11 @@ which is what lets the whole ladder be tested against hand-built toy graphs.
   cost the search minimised: `driveSeconds + turnSeconds + distanceSeconds + tollSeconds`. Only
   `driveSeconds` is comparable to another router's duration. Reporting `seconds` next to an OSRM
   duration compares a model against a measurement, which has been introduced and fixed twice here.
+- **THE DISTANCE CHARGE IS PER CLASS, so it is NOT recoverable from the total.** `distanceSeconds`
+  is summed from a precomputed per-edge array, never as `metres * secondsPerKm`: with a quality
+  weight the charge depends on WHICH classes the route used, not only how far it went, and deriving
+  it from the total would report a number the search never charged. A weight of 1.0 everywhere, or
+  an absent `qualityByRank`, restores the flat behaviour the toy graphs assume.
 - **`avoidTolls` is a HARD filter, never a large penalty.** "Avoid tolls" means the route must not
   use one; pricing tolls very high instead still returns a tolled route when no free one exists,
   which is the opposite of what the caller asked. Returning no route is the correct answer.

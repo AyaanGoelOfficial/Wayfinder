@@ -208,6 +208,16 @@ export class Router {
    */
   private readonly driveSecs: Float64Array;
 
+  /**
+   * The distance preference charged per edge, quality weight already applied.
+   *
+   * Precomputed for the same reason `secs` is, but kept SEPARATELY because the reported
+   * `distanceSeconds` can no longer be recovered as `metres * secondsPerKm`: with a per-class
+   * weight the charge depends on which classes the route used, not only how far it went. Deriving
+   * it from the total would report a number the search never charged.
+   */
+  private readonly distSecs: Float64Array;
+
   /** The objective in force. Held so per-request options can be resolved against it. */
   private readonly obj: ObjectiveConfig;
 
@@ -232,6 +242,9 @@ export class Router {
     // Defaulting to all-zero preferences keeps every toy-graph test asserting on pure travel time,
     // which is what makes a failure there mean the SEARCH is wrong rather than the objective.
     this.obj = objective ?? { secondsPerKm: 0, tollReluctanceSecondsPerKm: 0, avoidTollsByDefault: false };
+    if (this.obj.qualityByRank !== undefined && this.obj.qualityByRank.some((q) => !(q >= 0))) {
+      throw new Error('OBJECTIVE quality weights must be non-negative or A* is no longer admissible.');
+    }
     if (this.obj.secondsPerKm < 0 || this.obj.tollReluctanceSecondsPerKm < 0) {
       // Same reason the turn costs check: a negative preference does not fail, it silently breaks
       // A* admissibility and returns routes that are wrong rather than routes that are missing.
@@ -250,12 +263,21 @@ export class Router {
     // whether the query TOLERATES it, and that is a separate check.
     const perM = this.obj.secondsPerKm / 1000;
     const tollPerM = this.obj.tollReluctanceSecondsPerKm / 1000;
+    // The quality weight is resolved to a per-metre rate PER CLASS RANK once, here, so the hot
+    // loop never indexes a second table. An absent weights array means a flat rate on every class,
+    // which is the pre-quality objective and what the toy graphs want.
+    const quality = this.obj.qualityByRank;
+    const perMByRank = new Float64Array(256);
+    for (let r = 0; r < 256; r++) perMByRank[r] = perM * (quality === undefined ? 1 : (quality[r] ?? 1));
+    this.distSecs = new Float64Array(n);
     this.edgesOfShape = new Map();
     for (let e = 0; e < n; e++) {
       const lenM = g.edgeLengthM[e] as number;
       const drive = lenM / ((g.edgeSpeedKmh[e] as number) * KMH_TO_MS);
       this.driveSecs[e] = drive;
-      this.secs[e] = drive + lenM * perM + (g.edgeToll[e] === 1 ? lenM * tollPerM : 0);
+      const dist = lenM * (perMByRank[g.edgeClassRank[e] as number] as number);
+      this.distSecs[e] = dist;
+      this.secs[e] = drive + dist + (g.edgeToll[e] === 1 ? lenM * tollPerM : 0);
       const s = g.edgeShape[e] as number;
       const list = this.edgesOfShape.get(s);
       if (list) list.push(e);
@@ -508,7 +530,7 @@ export class Router {
     const metres = sumTrimmed((e) => g.edgeLengthM[e] as number);
     const driveSeconds = sumTrimmed((e) => this.driveSecs[e] as number);
     const tollMetres = sumTrimmed((e) => (g.edgeToll[e] === 1 ? (g.edgeLengthM[e] as number) : 0));
-    const distanceSeconds = (metres / 1000) * this.obj.secondsPerKm;
+    const distanceSeconds = sumTrimmed((e) => this.distSecs[e] as number);
     const tollSeconds = (tollMetres / 1000) * this.obj.tollReluctanceSecondsPerKm;
 
     // Recovered from the chosen path rather than accumulated during the search: the search

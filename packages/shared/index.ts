@@ -58,6 +58,15 @@ export interface SnapResult {
 export interface ObjectiveConfig {
   /** Seconds charged per kilometre travelled, on top of drive time. The distance preference. */
   readonly secondsPerKm: number;
+  /**
+   * Multiplier on `secondsPerKm` per `CLASS_RANK`, index 0 motorway to index 7 service. A rough
+   * kilometre costs more than a smooth one. Omit for a flat rate on every class, which is what
+   * the toy graphs and the pre-quality candidates in the sweeps want.
+   *
+   * Must be non-negative, and must not COMPRESS the class hierarchy: see `config/city.ts` for the
+   * invariant and `tests/engine/quality.test.ts` for the assertion over every class pair.
+   */
+  readonly qualityByRank?: readonly number[];
   /** Extra seconds per kilometre on a tolled road. A reluctance, not a fare model. */
   readonly tollReluctanceSecondsPerKm: number;
   /** Exclude tolled roads entirely unless a request overrides it. */

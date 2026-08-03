@@ -21,6 +21,7 @@ import { buildTurnTable } from '../../packages/pipeline/graph/restrictions.ts';
 import { Router } from '../../packages/engine/dijkstra.ts';
 import { IdMap } from '../../packages/pipeline/clip/idset.ts';
 import { OBJECTIVE } from '../../config/city.ts';
+import { CLASS_RANK } from '../../packages/pipeline/graph/profile.ts';
 import type { ObjectiveConfig } from '../../packages/shared/index.ts';
 import type { Clipped, ClipStats, ClippedWay } from '../../packages/pipeline/clip/clip.ts';
 
@@ -187,7 +188,11 @@ describe('the distance preference', () => {
     const res = r.route(start, 0, end, 1);
     expect(res).not.toBeNull();
     const x = res as NonNullable<typeof res>;
-    expect(x.distanceSeconds).toBeCloseTo((x.metres / 1000) * OBJECTIVE.secondsPerKm, 6);
+    // Every way in this fixture is `secondary`, so the whole route carries ONE quality weight and
+    // the charge is still a clean multiple of the metres. The weight has to appear explicitly:
+    // asserting the unweighted rate would now pass only if the weights were being ignored.
+    const q = OBJECTIVE.qualityByRank[CLASS_RANK['secondary'] as number] as number;
+    expect(x.distanceSeconds).toBeCloseTo((x.metres / 1000) * OBJECTIVE.secondsPerKm * q, 6);
   });
 });
 
@@ -262,6 +267,28 @@ describe('the shipped objective', () => {
 
   it('allows tolls by default, since the fastest road in this city is tolled', () => {
     expect(OBJECTIVE.avoidTollsByDefault).toBe(false);
+  });
+
+  it('prices the toll from the VERIFIED tariff and a value of time inside its stated band', () => {
+    // The guard against the failure mode this constant is most exposed to: being quietly nudged
+    // toward whatever makes the OSRM divergence smaller. It can only sit where a real tariff and a
+    // defensible value of time put it, so a fitted number fails here rather than in review.
+    //
+    // Tariff 2.65 rupees/km, verified 2026-08-03 against three sources and cross-checked against
+    // the published full run (438 rupees over 165.5 km is 2.647/km). Band 150 to 300 rupees/hour.
+    // Note the inversion: a LOWER value of time makes the toll cost MORE seconds.
+    const TARIFF = 2.65;
+    const cheapestTime = (TARIFF / 300) * 3600; // 31.8, the time-rich end
+    const dearestTime = (TARIFF / 150) * 3600; // 63.6, the time-poor end
+    expect(OBJECTIVE.tollReluctanceSecondsPerKm).toBeGreaterThanOrEqual(cheapestTime);
+    expect(OBJECTIVE.tollReluctanceSecondsPerKm).toBeLessThanOrEqual(dearestTime);
+
+    // And it is the midpoint of the band, not an end picked because it scored better.
+    expect(OBJECTIVE.tollReluctanceSecondsPerKm).toBeCloseTo((TARIFF / 225) * 3600, 6);
+
+    // CONTROL on the assertion itself: the superseded value really is outside the band, so the
+    // check above would have caught it. Without this, a band wide enough to admit anything passes.
+    expect(12).toBeLessThan(cheapestTime);
   });
 
   it('states an exchange rate inside the driver-plausible band of 1 minute per 2 to 3 km', () => {

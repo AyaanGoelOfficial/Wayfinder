@@ -46,13 +46,19 @@ const OVERLAP_TOL_M = 25;
 
 const base = { avoidTollsByDefault: false } as const;
 
+const Q = OBJECTIVE.qualityByRank;
+
 const CANDIDATES: readonly { name: string; cfg: ObjectiveConfig; note: string }[] = [
-  { name: 'none', cfg: { ...base, secondsPerKm: 0, tollReluctanceSecondsPerKm: 0 }, note: 'time only, the objective before this change' },
+  { name: 'none', cfg: { ...base, secondsPerKm: 0, tollReluctanceSecondsPerKm: 0 }, note: 'time only, the objective before any of this' },
   { name: 'dist-12', cfg: { ...base, secondsPerKm: 12, tollReluctanceSecondsPerKm: 0 }, note: '1 min per 5 km, weaker than the stated band' },
-  { name: 'dist-20', cfg: { ...base, secondsPerKm: 20, tollReluctanceSecondsPerKm: 0 }, note: 'the 3 km/min end of the stated band' },
-  { name: 'dist-24', cfg: { ...base, secondsPerKm: 24, tollReluctanceSecondsPerKm: 0 }, note: 'the 2.5 km/min midpoint, no toll term' },
-  { name: 'dist-30', cfg: { ...base, secondsPerKm: 30, tollReluctanceSecondsPerKm: 0 }, note: 'the 2 km/min end of the stated band' },
-  { name: 'SHIPPED', cfg: OBJECTIVE, note: 'the stated preference: 24 s/km plus 12 s/km toll reluctance' },
+  { name: 'dist-20', cfg: { ...base, secondsPerKm: 20, tollReluctanceSecondsPerKm: 0 }, note: 'the 3 km/min end of the stated band, flat' },
+  { name: 'dist-24', cfg: { ...base, secondsPerKm: 24, tollReluctanceSecondsPerKm: 0 }, note: 'the 2.5 km/min midpoint, flat, no toll term' },
+  { name: 'dist-30', cfg: { ...base, secondsPerKm: 30, tollReluctanceSecondsPerKm: 0 }, note: 'the 2 km/min end of the stated band, flat' },
+  { name: 'flat-24+12', cfg: { ...base, secondsPerKm: 24, tollReluctanceSecondsPerKm: 12 }, note: 'the previously shipped objective, FLAT rate, before quality weights' },
+  { name: 'qual-24', cfg: { ...base, secondsPerKm: 24, tollReluctanceSecondsPerKm: 0, qualityByRank: Q }, note: 'quality weights with no toll term, to isolate the weights' },
+  { name: 'toll-vot300', cfg: { ...OBJECTIVE, tollReluctanceSecondsPerKm: (2.65 / 300) * 3600 }, note: 'the time-RICH end of the value-of-time band, 300 rupees/hour, 31.8 s/km' },
+  { name: 'SHIPPED', cfg: OBJECTIVE, note: 'the stated preference: 24 s/km, class quality weights, toll DERIVED at 42.4 s/km' },
+  { name: 'toll-vot150', cfg: { ...OBJECTIVE, tollReluctanceSecondsPerKm: (2.65 / 150) * 3600 }, note: 'the time-POOR end of the value-of-time band, 150 rupees/hour, 63.6 s/km' },
   { name: 'avoid-tolls', cfg: { ...OBJECTIVE, avoidTollsByDefault: true }, note: 'the opt-in mode, to prove it is reachable and produces routes' },
 ];
 
@@ -152,7 +158,7 @@ const LANDMARK = 'gautam-buddha-university to jewar';
 console.log('  ROUTE SANITY FIRST, divergence second. overlap and tolled km say whether the routes');
 console.log('  are sensible; the deltas say whether they match a reference with no distance preference.\n');
 console.log(
-  `  ${'candidate'.padEnd(13)}${'overlap'.padStart(9)}${'tolled km'.padStart(11)}${'unrouted'.padStart(10)}` +
+  `  ${'candidate'.padEnd(13)}${'overlap'.padStart(9)}${'slow%'.padStart(8)}${'tolled km'.padStart(11)}${'unrouted'.padStart(10)}` +
     `${'dist med'.padStart(10)}${'dist p95'.padStart(10)}${'dur med'.padStart(9)}${'GBU-Jewar'.padStart(11)}${'verdict'.padStart(9)}`,
 );
 
@@ -164,6 +170,10 @@ for (const cand of CANDIDATES) {
   let tolledKm = 0;
   let unrouted = 0;
   let landmark = NaN;
+  // Share of route distance on tertiary and below. The class hierarchy question, measured on
+  // routes rather than on a table: "we now prefer village roads" is a claim about routes.
+  let slowM = 0;
+  let allM = 0;
 
   for (const p of pairs) {
     const ref = cache[p.label];
@@ -178,6 +188,11 @@ for (const cand of CANDIDATES) {
     if (r === null) {
       unrouted++;
       continue;
+    }
+    for (const e of r.edges) {
+      const len = g.edgeLengthM[e] as number;
+      allM += len;
+      if ((g.edgeClassRank[e] as number) >= 4) slowM += len;
     }
     const d = (r.metres - ref.distance) / ref.distance;
     deltas.push(Math.abs(d));
@@ -194,7 +209,8 @@ for (const cand of CANDIDATES) {
   const overlap = overlaps.length === 0 ? 0 : overlaps.reduce((a, b) => a + b, 0) / overlaps.length;
   const ok = medianDist <= MEDIAN_MAX && p95Dist <= P95_MAX;
   console.log(
-    `  ${cand.name.padEnd(13)}${pct(overlap).padStart(9)}${tolledKm.toFixed(1).padStart(11)}${unrouted.toString().padStart(10)}` +
+    `  ${cand.name.padEnd(13)}${pct(overlap).padStart(9)}${pct(allM === 0 ? 0 : slowM / allM).padStart(8)}` +
+      `${tolledKm.toFixed(1).padStart(11)}${unrouted.toString().padStart(10)}` +
       `${pct(medianDist).padStart(10)}${pct(p95Dist).padStart(10)}${pct(quantile(su, 0.5)).padStart(9)}` +
       `${pct(landmark).padStart(11)}${(ok ? 'PASS' : 'FAIL').padStart(9)}`,
   );

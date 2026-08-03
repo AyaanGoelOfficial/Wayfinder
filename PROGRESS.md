@@ -13,12 +13,12 @@ Update this in the same change that invalidates a line in it, never as a follow-
 | 1 city build | closed. Graph, places and tiles from one merged, deduped source |
 | 2 map on screen | closed. Own PMTiles, own style, own SDF glyphs, Devanagari confirmed rendering |
 | 3 Dijkstra routing | closed. Route endpoint, client rendering, charter items 1 and 2 measured |
-| 4 OSRM validation | Diagnosed; turn costs, distance and toll preferences all built. Distance median **2.20%, PASSES** the 3% threshold; p95 **21.33%** against 7%, fails. 0 router bugs, 0 graph defects, 16 of 56 pairs are OSRM leaving the area. p95 is worse BY DESIGN: we decline long highway detours OSRM accepts, and every one checks out against the stated exchange rate. `DIVERGENCE.md`, `DESIGN.md` |
+| 4 OSRM validation | **CLOSED** as a documented modelling difference, thresholds untouched. Distance median **3.33%** against 3% and p95 **25.26%** against 7%, both fail as raw numbers. 0 router bugs, 0 graph defects; 39 cost model, 16 OSRM leaving the area, 1 too close to call, every pair named in `VALIDATION.md`. The residual is three stated preferences OSRM does not have: a locally calibrated speed table, a distance-and-quality preference, and a toll priced from the published tariff. Acceptance paragraph and reasoning in `DESIGN.md` |
 | 5 A\* and bidirectional | Tooling built, baseline measured, both budgets **missed**. Re-route p95 359.50 ms against 30 ms; initial p95 386.24 ms against 150 ms. See `BENCHMARKS.md`. Algorithms NOT started |
 | 6 legality pass | NOT started. The U-turn penalty is specified in `DESIGN.md` and lands here |
 | 7 search and turn-by-turn | NOT started. Places index and fuzzy search exist; instructions do not |
 | 8 tracking | NOT started. Must not start before the U-turn penalty lands |
-| 9 phone verification | NOT started |
+| 9 phone verification | NOT started. Carries two on-the-ground checks nothing at a desk can do: read the POSTED car toll at the plaza against the 2.65 rupees/km in `config/city.ts`, and judge whether class is standing in acceptably for road surface |
 
 ## Known weaknesses
 
@@ -50,17 +50,33 @@ Update this in the same change that invalidates a line in it, never as a follow-
   values its defaults sit ABOVE the local posted limit exactly where it helps (trunk 85 against
   70, secondary 55 against 45). The locally-defensible correction makes agreement WORSE. Full
   reasoning in `DESIGN.md`; per-pair table in `DIVERGENCE.md`.
-- **The objective is no longer time alone.** A distance preference of 24 s/km, DERIVED from the
-  stated exchange rate of one minute per 2 to 3 extra km rather than fitted, plus a toll reluctance
-  of 12 s/km and an `avoidTolls` opt-in. `gautam-buddha-university to jewar` went from 43.87 km at
-  58% motorway on the tolled Yamuna Expressway to **30.61 km on NH334DD**, the road OSRM takes and
-  the road a local driver takes. Distance median 2.73% to **2.20%**, route shape overlap held at
-  75.27%. Reasoning and the full sweep in `DESIGN.md`.
-- **p95 WORSENED to 21.33% and is deliberately not tuned back.** Thirteen pairs swung to large
-  negatives because we now decline long highway detours OSRM accepts: `random 15` refuses 25.5 extra
-  km to save 1.1 min, `random 20` refuses 5.8 km to save 1.6 min. Checked against the stated
-  exchange rate, every one is a correct refusal, and none is near the boundary. OSRM has no distance
-  preference at all, so this measures a difference rather than a defect.
+- **The objective is no longer time alone.** A distance preference of 24 s/km DERIVED from the stated
+  exchange rate of one minute per 2 to 3 extra km, a per-class road QUALITY weight on top of it, and
+  a toll price DERIVED from the published tariff. Reasoning and the full sweep in `DESIGN.md`.
+- **The flat distance rate compressed the class hierarchy, and that was the same number as the
+  exchange rate, not a side effect of it.** Motorway to tertiary fell 2.571 to 1.982 and the
+  tertiary-and-below share of route distance rose 26.80% to 34.42%. 1.982 IS 24 s/km seen as a
+  maximum detour multiplier: at that boundary the extra distance buys exactly 2.50 km per minute
+  saved. Asserting the ratio must not compress is asserting the exchange rate is infinite.
+  `npm run diagnose:flattening` holds the measurement.
+- **Road QUALITY weights fixed it, and the sign is the whole point:** a rough kilometre costs more,
+  not a long trip. Ratio now **2.688, expanded**; slow-road share back to 30.43%. Weights are a
+  stated judgement, NOT from OSM tags, because `npm run calibrate:quality` shows `surface` coverage
+  is inversely correlated with need: 50 to 59% of motorway through secondary km against **6.27% of
+  unclassified**. `tests/engine/quality.test.ts` asserts the no-compression invariant over every
+  class pair, and it overrode two of the first-cut weights.
+- **The toll was under-priced by three and a half times, and the distance term had been covering for
+  it.** The old 12 s/km was justified only as "half the distance rate", which implies a value of time
+  of about 795 rupees an hour. Derived properly it is `2.65 / 225 * 3600` = **42.4 s/km**, from a
+  tariff verified against three sources and cross-checked arithmetically (438 rupees over 165.5 km is
+  2.647 per km). The landmark answer is -2.23% across the WHOLE value-of-time band, 150 to 300
+  rupees an hour, so it does not depend on the midpoint.
+- **BOTH distance thresholds now fail and neither was moved.** Median 3.33% against 3%, p95 25.26%
+  against 7%. The median had been passing at 2.20%, so this is a real behaviour change: pricing the
+  expressway properly takes us off it, 548 tolled km to 310, against a reference that prices no toll
+  at all. The `toll at 300 rupees/hour` candidate would pass the median at 2.47% with the best
+  overlap in the sweep and the identical landmark answer; it is refused because picking a driver's
+  value of time from a divergence table is parity chasing wearing a third hat.
 - **Every comparison against an external reference must be re-derived when the objective gains a
   term.** Adding the distance preference made the divergence tool report three router bugs that did
   not exist, because it compared drive time while the router had started minimising drive plus

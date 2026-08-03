@@ -301,40 +301,173 @@ band. `npm run experiment:objective` confirms that empirically, with 20, 24 and 
 GBU to Jewar on **-4.07%**. A number whose conclusion survives its own uncertainty is a preference;
 one that needs a specific value is a fit.
 
-| candidate | overlap | tolled km | unrouted | dist med | dist p95 | GBU to Jewar |
-|---|---|---|---|---|---|---|
-| none, time only | 75.10% | 738.2 | 0 | 2.73% | 16.98% | +37.49% |
-| dist-12, below band | 70.71% | 657.1 | 0 | 3.33% | 25.72% | +37.49% |
-| dist-20 | 75.29% | 635.5 | 0 | 2.77% | 21.33% | -4.07% |
-| dist-30 | 72.94% | 615.4 | 0 | 2.77% | 26.14% | -4.07% |
-| **shipped, 24 + 12** | **75.27%** | 548.2 | 0 | **2.20%** | 21.33% | -4.07% |
-| avoid-tolls | 54.23% | 0.0 | 0 | 5.32% | 36.32% | -4.07% |
+| candidate | overlap | slow % | tolled km | unrouted | dist med | dist p95 | GBU to Jewar |
+|---|---|---|---|---|---|---|---|
+| none, time only | 75.10% | 26.80% | 738.2 | 0 | 2.73% | 16.98% | +37.49% |
+| dist-12, below band | 70.71% | 32.92% | 657.1 | 0 | 3.33% | 25.72% | +37.49% |
+| dist-20, flat | 75.29% | 33.82% | 635.5 | 0 | 2.77% | 21.33% | -4.07% |
+| dist-30, flat | 72.94% | 36.18% | 615.4 | 0 | 2.77% | 26.14% | -4.07% |
+| flat 24 + toll 12 | 75.27% | 34.42% | 548.2 | 0 | **2.20%** | 21.33% | -4.07% |
+| qual-24, no toll term | 75.26% | 27.05% | 750.1 | 0 | 2.88% | 16.98% | +37.49% |
+| toll at 300 rupees/hour | 76.41% | 32.81% | 501.6 | 0 | 2.47% | 21.24% | -2.23% |
+| **SHIPPED, 24 + quality + 42.4** | 67.03% | 33.02% | 310.1 | 0 | 3.33% | 25.26% | **-2.23%** |
+| toll at 150 rupees/hour | 59.91% | 36.70% | 134.7 | 0 | 4.35% | 25.77% | -2.23% |
+| avoid-tolls | 56.87% | 37.02% | 0.0 | 0 | 5.24% | 30.19% | -2.23% |
 
 **`dist-12`, deliberately below the band, is worse than doing nothing** on every column. A weak
-distance preference perturbs routes without resolving the near-ties it exists for. That is evidence
-the band is the right region rather than a comfortable one.
-
-**Route shape held while the landmark was fixed**: overlap 75.10% to 75.27%. The landmark route went
-from 43.87 km at 58% motorway on the tolled Yamuna Expressway to **30.61 km** on NH334DD, which is
-the road OSRM takes and the road a local driver takes.
+distance preference perturbs routes without resolving the trades it exists for. That is evidence the
+band is the right region rather than a comfortable one.
 
 **Tolls are a FLAG, not a fudge.** `toll=yes` is parsed into per-edge graph data (artifact v3),
 because whether a road charges a toll is a fact about the road; what it is WORTH is a preference and
-lives in the objective. That split is what lets one artifact serve both modes. Real toll cost is per
-trip and route dependent, so a per-edge number pretending to be rupees would be unprincipled
-precision. The default is tolls ALLOWED and priced at a reluctance of 12 s/km, half the distance
-rate, saying only that a driver treats a tolled kilometre as costing about one and a half free ones.
-`avoidTolls` per request excludes them outright, as a HARD filter rather than a large penalty: "avoid
-tolls" means the route must not use one, and a high price would still return a tolled route when no
-free one exists. It leaves **0 of 56 pairs unrouted**, so the mode never strands a destination.
+lives in the objective. That split is what lets one artifact serve both modes. `avoidTolls` per
+request excludes them outright, as a HARD filter rather than a large penalty: "avoid tolls" means the
+route must not use one, and a high price would still return a tolled route when no free one exists.
+It leaves **0 of 56 pairs unrouted**, so the mode never strands a destination.
 
-**A STRUCTURAL SIDE EFFECT, recorded so it is not rediscovered as a surprise.** A per-km cost is a
-larger fraction of a fast road's cost than a slow one's. At 24 s/km a motorway edge goes from 40 to
-64 s/km and a tertiary from 103 to 127, so the effective speed ratio between them compresses from
-2.57 to 1.98. The distance preference therefore also flattens the class hierarchy by about a
-quarter, and moves routes off fast roads generally, not only on the near-ties it was introduced for.
-That is arguably correct, since fuel and wear do not care how fast you are going, but it is a real
-consequence and not an intended one.
+---
+
+## The toll price: derived from the tariff. Rebuilt at gate 4, after the first one was a placeholder.
+
+**The first toll number was never derived, and it was covering for the distance term.** It was 12
+s/km, justified only as "half of `secondsPerKm`, so the two move together". That tie was tidy and
+had no content: it made the price of a toll a function of the distance preference rather than of the
+toll. Inverting the arithmetic shows the size of the error. 12 s/km implies a value of time of
+`2.65 / 12 * 3600` = about **795 rupees an hour**, which nobody would defend for a private car driver
+in Greater Noida. The toll was under-priced by roughly three and a half times, and the flat distance
+preference had been silently doing its job.
+
+**Two inputs, one division, both stated in `config/city.ts`:**
+
+```
+TOLL_TARIFF_RUPEES_PER_KM / VALUE_OF_TIME_RUPEES_PER_HOUR * 3600
+  = 2.65 / 225 * 3600  =  42.4 seconds per tolled kilometre
+```
+
+**The tariff is verified, not recalled, and cross-checked against an independent total.** Three
+sources agree on 2.65 rupees per km for a car: the Wikipedia article, tollguru's expressway guide
+attributing it to 2025, and sarkarilist's rate list, which also gives the previous rate as 2.50 and
+attributes the rise to YEIDA's 74th board meeting. The cross-check that matters is arithmetic rather
+than editorial: the published full-run figure of 438 rupees over 165.5 km is **2.647 rupees per km**,
+agreeing to three digits with a number reached a different way. Fetched 2026-08-03.
+
+**One discrepancy, recorded rather than resolved by preference.** A Construction World article dated
+2024-09-30 reports a 13.5% rise to 2.95 per km effective 1 October under the Suraksha resolution
+plan. No source reporting a CURRENT rate corroborates it, and all three that do say 2.65. The higher
+figure is not used. If it is in fact live, the derived cost rises about 11% and every conclusion here
+strengthens rather than reverses, since a dearer toll can only make the tolled road less attractive.
+
+**The value of time is a stated judgement and is labelled as one.** 225 rupees an hour, the midpoint
+of a 150 to 300 band. It is not a published figure and is not presented as one.
+
+**The band is what carries the argument, and it was measured before the result was looked at.** The
+landmark answer is **-2.23% at every point in the band**, 31.8 s/km through 63.6 s/km, so the
+conclusion does not depend on landing on 225:
+
+| value of time | toll cost | GBU to Jewar | dist med | overlap |
+|---|---|---|---|---|
+| 300 rupees/hour, time rich | 31.8 s/km | -2.23% | 2.47% | 76.41% |
+| **225 rupees/hour, stated** | **42.4 s/km** | **-2.23%** | **3.33%** | 67.03% |
+| 150 rupees/hour, time poor | 63.6 s/km | -2.23% | 4.35% | 59.91% |
+
+**The threshold this had to clear was computed BEFORE the derivation, and deliberately not consulted
+during it.** Under the quality weights the landmark needed a toll price above **22.1 s/km** to change
+its answer. The whole band clears it, the midpoint by 92%. Had the derivation landed below 22.1, the
+honest response was to say the toll is worth less than the driver's behaviour implies, not to inflate
+it. That is why the number was derived first and compared second.
+
+**What this is and is not.** It is a fare converted into the only unit the search understands. It is
+NOT a claim that the toll is charged continuously: it is levied at plazas at 38, 95 and 150 km from
+Greater Noida, so the per-km figure is the tariff BASIS and not the billing mechanism. A per-km model
+therefore over-charges short hops onto the expressway, which is the most likely source of the
+overlap cost visible in the table above. No round-trip discount is modelled.
+
+**THE CLASS RATIO IS THE EXCHANGE RATE, NOT A SIDE EFFECT OF IT. This paragraph previously said
+otherwise and was wrong.** A per-km cost is a larger fraction of a fast road's cost than a slow
+one's, so at 24 s/km a motorway edge goes from 40 to 64 s/km and a tertiary from 103 to 127, and the
+ratio between them falls from 2.571 to 1.982. The earlier wording called that a side effect that
+moved routes off fast roads "not only on the near-ties it was introduced for". **There are no
+near-ties as a separate category.** The exchange rate applies at every margin, and the class ratio
+is simply that same rate expressed as a maximum detour multiplier:
+
+| rate | max detour factor | km per minute saved at that boundary |
+|---|---|---|
+| 0 s/km | 2.571 | infinite |
+| 20 s/km | 2.048 | 3.0 |
+| **24 s/km** | **1.982** | **2.50** |
+| 30 s/km | 1.898 | 2.0 |
+
+Swapping x km of tertiary for y km of motorway is accepted while `y < 1.982x`, and at that boundary
+the extra distance buys exactly 2.50 km per minute saved. So 1.982 IS 24 s/km, seen from the other
+side, and 2.571 is the willingness to detour forever for zero time saving. Asserting that the ratio
+must not compress is asserting that the exchange rate is infinite. `npm run diagnose:flattening`
+holds the measurement, and `tests/engine/quality.test.ts` holds the invariant.
+
+**Two proposals for separating the two were rejected, both on measurement rather than on taste.**
+Charging only the distance in EXCESS of the straight line between origin and destination is a
+no-op: across 168 measured routes, zero were shorter than their own straight line, minimum ratio
+1.1175, so `max(0, dist - D)` never clips, `D` is a per-query constant, and subtracting the same
+constant from every candidate cannot change which one is cheapest. The proof generalises to any
+query-constant baseline, the shortest path included. Weighting the rate by class so the ratio is
+PRESERVED EXACTLY requires `quality` proportional to seconds-per-km, which makes the whole
+objective `(1 + lambda) * driveTime`, a scalar on time, so the preference stops having an opinion
+at all.
+
+---
+
+## Road quality: the third proposal, and it worked. Built at gate 4.
+
+The complaint the flat rate produced was never "routes got shorter", it was **"we now prefer village
+roads"**. Measured, that complaint is real: the share of route distance on tertiary and below went
+from 26.80% under time alone to **34.42%** under a flat 24 s/km. The fix has to make a rough
+kilometre cost more, not a long trip cost more, and the sign is the whole point.
+
+**One preference, one rate, a weight on top.** `k_class = OBJECTIVE.secondsPerKm * quality[rank]`,
+so the file still has one number with a unit and the sentence still has one exchange rate in it: a
+minute is worth 2.5 km on an ordinary Greater Noida road, less on a rough one and more on a smooth
+one, in proportion to how much worse the road is to drive. Tertiary is the neutral class at 1.00.
+
+**The weights are NOT from OSM tags, and that is measured rather than assumed.**
+`npm run calibrate:quality` reports `smoothness` on 0.46% of drivable km and `surface` on 18.37%.
+Sparsity is the lesser problem. The decisive one is that `surface` coverage is INVERSELY correlated
+with need: 50 to 59% of motorway through secondary km carry it, against **6.27% of unclassified** and
+13.93% of residential. A tag present where roads are good and absent where they are rough cannot
+measure roughness, and 15,343 of the 16,373 tagged ways say asphalt or paved. Controls were read
+first, per `hard-rules.md`: `highway` at 100.00% and `maxspeed` at 1.46%, both matching independently
+known values, so the low numbers are the data and not the loop. If OSM coverage here improves, a
+per-edge surface field supersedes this table.
+
+**Where the stated judgement met a structural invariant, the invariant won.** The hierarchy must not
+compress: for any two classes, weighting must leave the slower one at least as expensive RELATIVE to
+the faster one as pure time made it. That holds exactly when `quality / secondsPerClassKm` never
+decreases as roads get smaller. My first cut had primary at 0.70 and trunk at 0.50, which broke it
+against secondary; both came down. `tests/engine/quality.test.ts` walks every class pair.
+
+| | time only | flat 24 | quality weighted |
+|---|---|---|---|
+| motorway, s/km | 40.00 | 64.00 | 47.20 |
+| tertiary, s/km | 102.86 | 126.86 | 126.86 |
+| **motorway to tertiary** | **2.571** | **1.982 COMPRESSED** | **2.688 expanded** |
+| slow-road share of route km | 26.80% | 34.42% | 30.43% |
+
+**LINKS ARE EXEMPT FROM THE ORDERING, deliberately.** A `*_link` ranks with its parent so that
+leaving a motorway by the only means a motorway provides is not charged as a demotion. But
+`motorway_link` defaults to 45 km/h and `primary` to 50, so once links are in, rank order and speed
+order genuinely disagree and no per-rank weight can satisfy the invariant across both. The test
+asserts the thing that would actually be a bug instead: no link is ever cheaper per km than the road
+it serves. **Within a rank the weight cannot separate two classes either**, so `unclassified` against
+`road` is still compressed. Keying on class rather than speed is the deliberate choice there, since a
+residential street posted at 60 is still a residential street.
+
+**Then the landmark came back, and that was the real finding.** Quality weights alone put
+`gautam-buddha-university to jewar` back to +37.49%, because expanding the ratio works precisely by
+making the motorway kilometre cheap, and the landmark had been fixed by making it expensive. At
+`quality[motorway] = 0.30` the surviving class-independent distance preference is only
+`24 * 0.30 = 7.2` s/km, one minute per 8.3 km, far outside the stated 2 to 3 km band, and weaker than
+`dist-12` which was already shown to be worse than doing nothing. **A flat distance preference and an
+uncompressed class hierarchy are opposed by construction.** What resolved it was not a compromise
+between them but the toll price above, derived independently, which turned out to be what the
+distance term had been standing in for all along.
 
 **THE OBJECTIVE CHANGED WHAT A FAIR COMPARISON IS, and the diagnosis had to change with it.**
 Adding the distance term made `npm run diagnose:route` report THREE router bugs that did not exist:
@@ -352,12 +485,15 @@ external reference has to be re-derived, because the reference does not have tha
 `TOO CLOSE TO CALL` verdict was added at the same time, since the old code printed "its path costs
 MORE" on pairs where it cost less but by less than the instrument could resolve.
 
-Final partition over 56 pairs with the objective in force: **33 cost model, 16 OSRM leaving the
-area, 7 too close to call, 0 router bugs, 0 graph defects.**
+Final partition over 56 pairs with the full objective in force: **39 cost model, 16 OSRM leaving the
+area, 1 too close to call, 0 router bugs, 0 graph defects.** Per pair, joined into `VALIDATION.md`.
 
-**p95 got WORSE, 16.98% to 21.33%, and that is not being tuned away.** Thirteen pairs swung to large
-negatives: we are now much SHORTER than OSRM. Checked against the stated rule rather than against
-OSRM, all of them are correct refusals:
+**BOTH distance thresholds now fail: median 3.33% against 3%, p95 25.26% against 7%. Neither
+threshold moved, and neither preference was tuned to recover them.** The median had been passing at
+2.20% under the flat rate, so this is a real change in behaviour and is recorded as one. Its cause is
+single and identifiable: pricing the Yamuna Expressway at its published tariff moves us off it, from
+548 tolled km across the 56 pairs to 310, and OSRM's car profile prices no toll at all. Every pair
+that swung is a trade declined against a stated rate rather than a road we could not find:
 
 | pair | OSRM's route is | saves, our model | km per minute saved | at 2.5 km/min |
 |---|---|---|---|---|
@@ -365,9 +501,50 @@ OSRM, all of them are correct refusals:
 | random 15 | 25.5 km longer | 1.1 min | 23.2 | decline |
 | random 20 | 5.8 km longer | 1.6 min | 3.6 | decline |
 
-None is near the boundary. OSRM has no distance preference at all, so it accepts trades we refuse;
-the divergence measures that difference rather than a defect. Lowering `secondsPerKm` to recover p95
-would be fitting to OSRM by another name, which is the thing this file exists to refuse.
+**The cheap way to pass both thresholds is available and is being refused, explicitly.** The
+`toll at 300 rupees/hour` row scores best on nearly every column, median 2.47% and the highest
+overlap in the table at 76.41%, with the identical landmark answer. Selecting it would mean choosing
+a driver's value of time from a divergence table against a reference router that has no toll model,
+which is parity chasing wearing a third hat. The value of time is stated at the midpoint of its band
+in `config/city.ts` and the band is reported beside it, so anyone who thinks 300 is the better
+judgement can argue for it on its own terms and change one constant.
+
+---
+
+## Gate 4, CLOSED as a documented modelling difference. Thresholds untouched.
+
+The test for closing was never the percentage. It was whether the difference from a bigger router
+can be said in one paragraph to a driver, without appealing to the number. It can:
+
+> **We model trunk roads at the locally posted 70 km/h rather than 85, so a highway detour looks
+> less rewarding to us than it does to other routers. We treat a minute saved as worth about 2.5 km
+> of extra driving on an ordinary road, less on a rough one and more on a smooth one, so we decline
+> long detours and we will not send you down a village road to save a little distance. And we price
+> the Yamuna Expressway toll at what it actually costs, 2.65 rupees per km against a driver's time
+> at 225 rupees an hour, so on Greater Noida to Jewar the expressway wins by a small margin and we
+> take it, while OSRM takes it for free because it prices no toll at all.**
+
+**That last clause disagrees with the instinct that started this work,** which was that a local
+driver takes NH334DD. It is kept anyway, because the sentence has to describe the model rather than
+flatter it, and because the model's reason is now stated in rupees that can be checked rather than
+in a constant chosen to produce the preferred answer. If the instinct is right, the thing that is
+wrong is the value of time or the tariff, and both are one named constant away from being corrected.
+
+**Why this closes with two failing thresholds.** The standing rule for gate 4 is that a residual
+which is an explained and defensible modelling difference counts as passed, and what is forbidden is
+moving a threshold because a number is stubborn. Neither threshold moved. Every residual has a named
+cause in `VALIDATION.md`, the partition contains **0 router bugs and 0 graph defects**, the search
+was cleared by routing our own engine between OSRM's own endpoints, and the graph was cleared by two
+independent coverage measures that agree. What remains is three stated preferences that OSRM does not
+have: a locally calibrated speed table, a distance-and-quality preference, and a priced toll.
+
+**THE REMAINING GAP, stated because a driver would care about it.** Surface quality is still not
+modelled, only road CLASS as a proxy for it. A tertiary road that has been resurfaced and one that
+has not are identical to us. The proxy is defensible here and measurably helps, but it is a proxy:
+we may still route you down 57 km of village road because the class table says tertiary is ordinary
+when that particular tertiary is not. `surface` coverage is too sparse and too biased to fix this
+today, per the calibration above. **Gate 9, on a real drive, is where this gets found out**, and it
+is the first thing to re-examine when a route feels wrong but prices correctly.
 
 ---
 

@@ -211,6 +211,46 @@ export const ROUTE_BUDGET = {
  * be parity chasing wearing a different hat, and it would produce numbers nobody could defend
  * except by pointing at the number.
  */
+/**
+ * The published Yamuna Expressway car tariff, in rupees per kilometre.
+ *
+ * VERIFIED, NOT RECALLED, and checked against an independent total rather than taken from one
+ * page. Three sources agree on 2.65 for a car, jeep or van: the Wikipedia article, tollguru's
+ * expressway guide (attributing it to 2025), and sarkarilist's rate list (previous rate 2.50,
+ * raised at YEIDA's 74th board meeting). The cross-check is the full-run figure: 438 rupees over
+ * 165.5 km is 2.647 rupees per km, which agrees to three digits with a number derived a different
+ * way. Fetched 2026-08-03.
+ *
+ * ONE DISCREPANCY, RECORDED RATHER THAN RESOLVED BY PREFERENCE. A Construction World article dated
+ * 2024-09-30 reports a 13.5% rise to 2.95 per km effective 1 October, under the Suraksha
+ * resolution plan. No source reporting a CURRENT rate corroborates 2.95, and the three that do
+ * report a current rate all say 2.65. The higher figure is not used. If it turns out to be live,
+ * this constant rises about 11% and every conclusion below strengthens rather than reverses,
+ * because a dearer toll can only make the tolled road less attractive.
+ *
+ * This is the ONLY toll road in the build area that matters at this scale, so one tariff stands in
+ * for the network. `npm run calibrate:quality` reports 920 ways tagged `toll=yes`.
+ *
+ * RE-VERIFY THIS AT GATE 9. Phone verification happens in the city, on the road, where the current
+ * car rate is posted at the plaza and reading it is a one-glance check that no amount of desk
+ * research equals. If the posted figure disagrees with 2.65, change this constant and re-run
+ * `npm run experiment:objective`; nothing else needs touching, which is the point of deriving the
+ * cost from a tariff rather than storing the seconds directly.
+ */
+const TOLL_TARIFF_RUPEES_PER_KM = 2.65;
+
+/**
+ * What an hour of a private car driver's time is worth here, in rupees. A STATED JUDGEMENT.
+ *
+ * 225 is the midpoint of a 150 to 300 band. Unlike the tariff this is not a published figure and
+ * is not presented as one: it is the same kind of preference as the distance exchange rate, and it
+ * is stated so it can be argued with rather than buried inside a seconds-per-km constant. The band
+ * is what matters, and it is checked at the point of use: every value in it produces a toll price
+ * above the level at which the landmark route changes, so the conclusion does not depend on
+ * landing on 225.
+ */
+const VALUE_OF_TIME_RUPEES_PER_HOUR = 225;
+
 export const OBJECTIVE = {
   /**
    * What one extra kilometre is worth, in seconds.
@@ -228,18 +268,96 @@ export const OBJECTIVE = {
   secondsPerKm: 24,
 
   /**
-   * What a kilometre of TOLLED road is worth on top, in seconds. Applied only when tolls are
-   * allowed, since excluding them makes the price irrelevant.
+   * How much worse a kilometre of each road class is to drive, as a multiplier on
+   * `secondsPerKm`. Indexed by `CLASS_RANK`, so index 0 is motorway and index 7 is service.
    *
-   * A RELUCTANCE, EXPLICITLY NOT A FARE MODEL. Real toll cost is per trip and route dependent, so
-   * a per-edge number pretending to be rupees would be unprincipled precision. This says something
-   * weaker and defensible instead: a driver treats a kilometre of tolled road as costing about one
-   * and a half kilometres of free road. Half of `secondsPerKm`, so the two move together and there
-   * is one exchange rate in this file rather than two that can drift apart.
+   * ONE PREFERENCE, ONE RATE, A WEIGHT ON TOP. The exchange rate above is still the only number
+   * with a unit. This says what a kilometre of THIS road is worth relative to an ordinary one, so
+   * the whole preference reads as a single sentence: a minute is worth 2.5 km on an ordinary
+   * Greater Noida road, less on a rough one and more on a smooth one, in proportion to how much
+   * worse the road is to drive.
    *
-   * The PRINCIPLED part of toll handling is the flag, not this number: see `avoidTollsByDefault`.
+   * WHY IT EXISTS. A single flat rate on every edge implements the exchange rate correctly and has
+   * one unintended consequence: it is a larger FRACTION of a fast road's cost than a slow one's,
+   * so it compresses the class hierarchy. Measured, at a flat 24 s/km the motorway to tertiary
+   * cost ratio fell from 2.571 to 1.982 and the tertiary-and-below share of route distance across
+   * the 56 validation pairs rose from 26.8% to 34.4%. The intent was to decline detours, never to
+   * prefer village roads. Weighting the rate by class is the fix, and the sign is what matters:
+   * a rough kilometre costs MORE, not a long trip costs more.
+   *
+   * NOT DERIVED FROM OSM TAGS, AND THAT IS MEASURED, NOT ASSUMED. `npm run calibrate:quality`
+   * reports `smoothness` on 0.46% of drivable km, and `surface` on 18.37% but distributed exactly
+   * wrong: 50 to 59% of motorway through secondary km, against 6.27% of unclassified and 13.93% of
+   * residential. Coverage that is highest where roads are good and lowest where they are rough
+   * cannot measure roughness, and 15,343 of the 16,373 tagged ways say asphalt or paved. If OSM
+   * coverage in this area ever improves, a per-edge surface field is the natural upgrade and it
+   * would supersede this table.
+   *
+   * THE STATED JUDGEMENT, which is what these numbers are, about driving in Greater Noida:
+   *
+   *   motorway 0.30      Grade separated, no cross traffic, no pedestrians, lane marked. The
+   *                      Yamuna and Noida to Greater Noida expressways. The least demanding
+   *                      kilometre on this network by a wide margin.
+   *   trunk 0.45         Sealed and wide, but at-grade junctions, slow vehicles sharing the
+   *                      carriageway, and occasional pedestrians. NH334DD is the case in point.
+   *   primary 0.65       Signalised sector arterial. Autos and two-wheelers merging continuously.
+   *   secondary 0.85     Narrower arterial, frequent side entries, vehicles parked at the edge.
+   *   tertiary 1.00      NEUTRAL, and the road the exchange rate is stated about. Sealed but
+   *                      narrow, unmarked speed breakers, cattle. The ordinary road here.
+   *   unclassified 1.50  Village link road. Part unsealed, broken edges, oncoming traffic in the
+   *                      middle of the carriageway.
+   *   residential 2.00   Sector interior street. Parking on both sides, pedestrians and children
+   *                      on the carriageway because there is no footpath.
+   *   service 3.50       Parking aisles and back lanes. Walking pace, and not a through route
+   *                      under any circumstance. `living_street` ranks here too.
+   *
+   * WHERE THE JUDGEMENT MET A STRUCTURAL INVARIANT, THE INVARIANT WON, and it is worth naming
+   * which numbers moved. The hierarchy must not compress: for any two classes, weighting must
+   * leave the slower one at least as expensive RELATIVE to the faster one as pure time made it.
+   * That holds exactly when `quality / secondsPerClassKm` never decreases as roads get smaller,
+   * and `tests/engine/quality.test.ts` asserts it over every pair. My first cut had primary at
+   * 0.70 and trunk at 0.50, which broke it against secondary; both came down. Neither number was
+   * moved by looking at the 56 pairs, and this table is never tuned against them.
    */
-  tollReluctanceSecondsPerKm: 12,
+  qualityByRank: [0.3, 0.45, 0.65, 0.85, 1.0, 1.5, 2.0, 3.5] as const,
+
+  /**
+   * What a kilometre of TOLLED road costs, in seconds. Applied only when tolls are allowed, since
+   * excluding them makes the price irrelevant.
+   *
+   * DERIVED FROM THE PUBLISHED TARIFF AND A STATED VALUE OF TIME. Two inputs, one division:
+   *
+   *     TOLL_TARIFF_RUPEES_PER_KM / VALUE_OF_TIME_RUPEES_PER_HOUR * 3600
+   *       = 2.65 / 225 * 3600
+   *       = 42.4 seconds per tolled kilometre
+   *
+   * Both inputs are stated below as named constants so neither can be quietly adjusted, and the
+   * band on the value of time is checked the same way the distance band is: the conclusion has to
+   * survive the whole range or the number is a fit rather than a preference.
+   *
+   *   at 150 rupees/hour, a time-poor driver   63.6 s/km
+   *   at 225 rupees/hour, the stated midpoint  42.4 s/km
+   *   at 300 rupees/hour, a time-rich driver   31.8 s/km
+   *
+   * THIS SUPERSEDES A NUMBER THAT WAS NEVER DERIVED. The previous value was 12 s/km, justified
+   * only as "half of `secondsPerKm`, so the two move together". That tie was tidy and had no
+   * content: it made the toll price a function of the distance preference rather than of the toll.
+   * Inverting the arithmetic shows how far off it was. 12 s/km implies a value of time of
+   * 2.65 / 12 * 3600 = about 795 rupees an hour, which is not a defensible figure for a private
+   * car driver here. We were under-pricing the toll by roughly a factor of three and a half, and
+   * the flat distance preference had been silently covering for it.
+   *
+   * WHAT THIS IS AND IS NOT. It is a fare converted into the only unit the search understands.
+   * It is NOT a claim that the toll is charged per kilometre continuously: it is levied at plazas
+   * at 38, 95 and 150 km from Greater Noida, and the per-km figure is the published tariff basis
+   * rather than the billing mechanism. For a router choosing between corridors that difference
+   * does not matter, because what is being compared is the cost of using the tolled road at all.
+   * It also carries no discount logic, so the round-trip-within-24-hours rate is not modelled.
+   *
+   * The PRINCIPLED part of toll handling is still the flag, not this number: `avoidTollsByDefault`
+   * is what answers "do not put me on a toll road", and no price is a substitute for it.
+   */
+  tollReluctanceSecondsPerKm: (TOLL_TARIFF_RUPEES_PER_KM / VALUE_OF_TIME_RUPEES_PER_HOUR) * 3600,
 
   /**
    * Whether to exclude tolled roads outright unless the caller asks for them.

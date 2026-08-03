@@ -90,6 +90,8 @@ Measurement and acceptance:
 npm run validate         # 6 landmark + 50 random pairs vs OSRM. Median <3%, p95 <7%
 npm run diagnose:route   # WHY a pair diverges, grouped by cause -> DIVERGENCE.md. Add --all
 npm run calibrate:speeds # tagged maxspeed per class vs our defaults. Read the sample counts
+npm run calibrate:quality # surface/smoothness/lanes coverage per class. Controls printed first
+npm run diagnose:flattening # class ratio, slow-road share, and the straight-line-excess proof
 npm run experiment:speeds # A/B a speed table over the same 56 pairs. No rebuild needed
 npm run experiment:turns  # A/B the turn cost model. Reports SHAPE overlap, not just the delta
 npm run experiment:objective # distance and toll preferences. Route sanity BEFORE divergence
