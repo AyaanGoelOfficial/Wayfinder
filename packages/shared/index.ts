@@ -79,8 +79,15 @@ export interface ObjectiveConfig {
  * NOT a quality knob. Every rung must return the IDENTICAL route, within 1e-6 on cost; they differ
  * only in how much of the graph they settle to find it. The option exists so the equality suite can
  * run two rungs over one graph and diff them, and so a regression can be bisected to a rung.
+ *
+ * `dijkstra-h-discarded` is a MEASUREMENT MODE and must never be served. It evaluates the A\*
+ * heuristic and then throws the value away, searching exactly as Dijkstra does. That isolates the
+ * two things A\* changes at once: against `dijkstra` it prices the heuristic's per-state cost, and
+ * against `astar` it prices the pruning at equal per-state cost. Without it, "A\* settled 34% fewer
+ * states and took 37% less time" cannot be read as evidence about the memory model, because the
+ * per-state cost moved underneath the comparison.
  */
-export type RoutingAlgorithm = 'dijkstra' | 'astar';
+export type RoutingAlgorithm = 'dijkstra' | 'astar' | 'dijkstra-h-discarded';
 
 /** Per-request overrides of the objective. Everything omitted falls back to the config. */
 export interface RouteOptions {

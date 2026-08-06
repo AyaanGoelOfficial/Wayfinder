@@ -27,6 +27,44 @@ import { SnapIndex } from '../packages/engine/snap.ts';
 import { Router } from '../packages/engine/dijkstra.ts';
 import { PlacesSearch } from '../packages/engine/search.ts';
 import { parseGraphArtifact } from '../packages/engine/graphfile.ts';
+import {
+  QUIET_MACHINE_CHECKLIST,
+  STABILITY_MAX_SPREAD,
+  measureMachineStability,
+} from './lib/machine.ts';
+
+/**
+ * PREFLIGHT, AND IT REFUSES RATHER THAN WARNS.
+ *
+ * A benchmark that self-reports contamination and then prints numbers anyway will have those
+ * numbers quoted, because the table is the memorable part and the caveat is not. So an unsteady
+ * machine ends the run here, before a single route is timed, and nothing is written to
+ * `BENCHMARKS.md` that could later be read as a measurement.
+ *
+ * `--force` exists for the one legitimate case, deliberately investigating the instrument itself.
+ * It stamps the output so a forced run cannot be mistaken for a clean one.
+ */
+const FORCED = process.argv.includes('--force');
+{
+  const m = measureMachineStability();
+  const steady = m.spread <= STABILITY_MAX_SPREAD;
+  console.log('=== machine preflight ===');
+  console.log(
+    `  fixed kernel x16   min ${m.minMs.toFixed(1)} ms   max ${m.maxMs.toFixed(1)} ms   ` +
+      `spread ${m.spread.toFixed(2)}x   drift ${m.driftPct >= 0 ? '+' : ''}${m.driftPct.toFixed(1)}%`,
+  );
+  console.log(`  threshold          ${STABILITY_MAX_SPREAD.toFixed(2)}x   ${steady ? 'STEADY' : 'UNSTEADY'}\n`);
+  if (!steady && !FORCED) {
+    console.error('bench REFUSED: this machine is not steady enough to measure anything right now.');
+    console.error('Wall times taken now would be noise wearing a table. Shut things down and retry:\n');
+    for (const l of QUIET_MACHINE_CHECKLIST) console.error(`  ${l}`);
+    console.error('\nSettled-state counts are load independent, so `npm run gate:equality` still');
+    console.error('reports useful search-effort numbers on a busy machine. Use those meanwhile.');
+    console.error('\nTo measure the instrument itself rather than the code, re-run with --force.');
+    process.exit(1);
+  }
+  if (!steady) console.log('  FORCED past an unsteady machine. Every number below is suspect.\n');
+}
 
 const DATA = resolve(import.meta.dirname, '../data');
 const SEED = 20260731;
@@ -34,7 +72,7 @@ const INITIAL_SAMPLES = 60;
 const REROUTE_SAMPLES = 60;
 
 /** Every rung, benchmarked over the identical queries. `gate:equality` proves they agree. */
-const ALGORITHMS: readonly RoutingAlgorithm[] = ['dijkstra', 'astar'];
+const ALGORITHMS: readonly RoutingAlgorithm[] = ['dijkstra', 'dijkstra-h-discarded', 'astar'];
 /** The rung the server actually serves, and therefore the one the budgets are judged against. */
 const SHIPPED_ALGORITHM: RoutingAlgorithm = 'astar';
 const SEARCH_QUERIES = ['Pari Chowk', 'Knowledge Park', 'Kasna', 'Gaur City', 'Surajpur', 'Jewar', 'Dadri', 'Nolej Park'];
@@ -227,43 +265,70 @@ interface Sample { label: string; km: number; ms: number; settled: number; relax
 
 const initialByAlg = new Map<RoutingAlgorithm, Sample[]>();
 const rerouteByAlg = new Map<RoutingAlgorithm, Sample[]>();
-
-for (const algorithm of ALGORITHMS) {
-  const iOut: Sample[] = [];
-  for (const q of initialQueries) {
-    const sa = snapIndex.snap(q.a, 'destination', SNAP_DESTINATION_M);
-    const sb = snapIndex.snap(q.b, 'destination', SNAP_DESTINATION_M);
-    if (sa === null || sb === null) continue;
-    let km = 0;
-    let settled = 0;
-    let relaxed = 0;
-    const t = timeIt(() => {
-      const r = router.route(sa.edgeId, sa.fraction, sb.edgeId, sb.fraction, { algorithm });
-      km = r === null ? 0 : r.metres / 1000;
-      settled = r === null ? 0 : r.settled;
-      relaxed = r === null ? 0 : r.relaxed;
-    });
-    if (km === 0) continue;
-    iOut.push({ label: q.label, km, ms: t, settled, relaxed });
-  }
-  initialByAlg.set(algorithm, iOut);
-
-  const rOut: Sample[] = [];
-  for (const q of rerouteQueries) {
-    let ok = false;
-    let settled = 0;
-    let relaxed = 0;
-    const t = timeIt(() => {
-      const r = router.route(q.startEdge, q.startFraction, q.endEdge, q.endFraction, { algorithm });
-      ok = r !== null;
-      settled = r === null ? 0 : r.settled;
-      relaxed = r === null ? 0 : r.relaxed;
-    });
-    if (!ok) continue;
-    rOut.push({ label: q.label, km: q.remainingKm, ms: t, settled, relaxed });
-  }
-  rerouteByAlg.set(algorithm, rOut);
+for (const a of ALGORITHMS) {
+  initialByAlg.set(a, []);
+  rerouteByAlg.set(a, []);
 }
+
+/**
+ * RUNGS ARE INTERLEAVED PER QUERY, AND ROTATED. This is not tidiness, it is the difference between
+ * a comparison and a coincidence.
+ *
+ * Benchmarking all queries for rung A and then all queries for rung B attributes any drift in the
+ * machine to whichever rung happened to be running at the time. Measured, on this repo, in a run
+ * whose preflight passed: `dijkstra-h-discarded` does STRICTLY MORE work than `dijkstra` and settles
+ * an identical number of states, yet came out 53% faster on initial routes and 93% slower on
+ * re-routes in the same run. Both are impossible; both are the machine drifting under a sequential
+ * schedule.
+ *
+ * So every rung is timed back to back on the SAME query, and the order is rotated by query index so
+ * no rung permanently occupies the cache-cold first slot.
+ */
+const measure = (
+  label: string,
+  run: (algorithm: RoutingAlgorithm) => { ok: boolean; km: number; settled: number; relaxed: number },
+  into: Map<RoutingAlgorithm, Sample[]>,
+  rotation: number,
+): void => {
+  const order = ALGORITHMS.map((_, j) => ALGORITHMS[(rotation + j) % ALGORITHMS.length] as RoutingAlgorithm);
+  const got: { a: RoutingAlgorithm; s: Sample }[] = [];
+  for (const a of order) {
+    let out = { ok: false, km: 0, settled: 0, relaxed: 0 };
+    const t = timeIt(() => {
+      out = run(a);
+    });
+    if (!out.ok) return; // a query only counts when EVERY rung answered it, or the sets differ
+    got.push({ a, s: { label, km: out.km, ms: t, settled: out.settled, relaxed: out.relaxed } });
+  }
+  for (const g of got) (into.get(g.a) as Sample[]).push(g.s);
+};
+
+initialQueries.forEach((q, i) => {
+  const sa = snapIndex.snap(q.a, 'destination', SNAP_DESTINATION_M);
+  const sb = snapIndex.snap(q.b, 'destination', SNAP_DESTINATION_M);
+  if (sa === null || sb === null) return;
+  measure(
+    q.label,
+    (algorithm) => {
+      const r = router.route(sa.edgeId, sa.fraction, sb.edgeId, sb.fraction, { algorithm });
+      return { ok: r !== null && r.metres > 0, km: r === null ? 0 : r.metres / 1000, settled: r === null ? 0 : r.settled, relaxed: r === null ? 0 : r.relaxed };
+    },
+    initialByAlg,
+    i,
+  );
+});
+
+rerouteQueries.forEach((q, i) => {
+  measure(
+    q.label,
+    (algorithm) => {
+      const r = router.route(q.startEdge, q.startFraction, q.endEdge, q.endFraction, { algorithm });
+      return { ok: r !== null, km: q.remainingKm, settled: r === null ? 0 : r.settled, relaxed: r === null ? 0 : r.relaxed };
+    },
+    rerouteByAlg,
+    i,
+  );
+});
 
 const initialDetail = initialByAlg.get(SHIPPED_ALGORITHM) as Sample[];
 const rerouteDetail = rerouteByAlg.get(SHIPPED_ALGORITHM) as Sample[];
@@ -348,11 +413,14 @@ const ladder = (
 const ladderLines = [...ladder('initial route', initialByAlg), ...ladder('re-route', rerouteByAlg)];
 for (const l of ladderLines) console.log(l);
 
+// The SECOND check, and it covers what the preflight cannot: the preflight measures the machine
+// before the run, this measures it across the run. Something starting up halfway through is
+// exactly the case a preflight alone would miss.
 const loadFactor = bestTotalMs === 0 ? 1 : observedTotalMs / bestTotalMs;
 const quiet = loadFactor < 1.15;
 console.log(
   `\n  LOAD CANARY  observed/best = ${loadFactor.toFixed(2)}  ${
-    quiet ? 'machine was quiet, wall times are usable' : 'MACHINE WAS BUSY, treat every wall time above as an upper bound'
+    quiet ? 'machine stayed quiet across the run' : 'MACHINE BECAME BUSY DURING THE RUN'
   }`,
 );
 console.log('  Settled counts are deterministic and unaffected by load. When these disagree, believe them.');
@@ -443,3 +511,15 @@ console.log(
     ? '\nbench: both route budgets met.'
     : '\nbench: at least one route budget NOT met. This is the gate 5 target, not a test failure.',
 );
+
+// The canary refuses AFTER the fact, for the same reason the preflight refuses before it: a table
+// with a warning above it gets quoted without the warning. BENCHMARKS.md is still written and it
+// carries the contamination notice in its own header, but a non-zero exit makes the run unusable as
+// evidence rather than merely caveated. The preflight bounds the machine at ONE INSTANT; this
+// covers something starting up halfway through, which no preflight can see.
+if (!quiet) {
+  console.error(`\nbench FAILED: the machine became busy DURING the run, canary ${loadFactor.toFixed(2)}.`);
+  console.error('Numbers from this run are upper bounds and the rung comparison is not trustworthy.');
+  console.error('Re-run when settled. Settled-state counts in the ladder above remain valid.');
+  process.exit(1);
+}

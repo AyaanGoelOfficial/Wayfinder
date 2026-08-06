@@ -47,7 +47,9 @@ const g = artifact.graph;
 const r = artifact.restrictions;
 const snap = new SnapIndex(g, BUILD_AREA);
 
-const ALGORITHMS: readonly RoutingAlgorithm[] = ['dijkstra', 'astar'];
+// `dijkstra-h-discarded` is in here on purpose: it is a measurement mode, and the claim that it
+// searches exactly as Dijkstra does is only worth anything if something checks it.
+const ALGORITHMS: readonly RoutingAlgorithm[] = ['dijkstra', 'astar', 'dijkstra-h-discarded'];
 const routers = new Map<RoutingAlgorithm, Router>();
 for (const a of ALGORITHMS) routers.set(a, new Router(g, r, TURN_COST, OBJECTIVE));
 
@@ -133,6 +135,29 @@ for (const [via, seqs] of r.bannedSequences) {
   }
 }
 
+// --- is this suite even CAPABLE of catching a reversed-order backward search? -------------------
+//
+// A backward search walks the same directed edges in reverse order, so the bug it is exposed to is
+// checking the triple with its ends swapped: `forbidden(via, from, to)` where it should be
+// `forbidden(via, to, from)`. That bug is INVISIBLE at a site where both (f,v,t) and (t,v,f) are
+// banned, because the wrong lookup still lands on a ban. A suite made only of such sites would pass
+// a reversed implementation and prove nothing.
+//
+// So the property is asserted rather than assumed, and re-derived from the data on every run: a
+// future extract could add a symmetric pair and quietly blind this gate.
+const tripleKey = (f: number, v: number, t: number): string => `${f}|${v}|${t}`;
+const bannedTriples = new Set<string>();
+for (const [via, seqs] of r.bannedSequences) for (const s of seqs) bannedTriples.add(tripleKey(s.fromEdge, via, s.toEdge));
+let blindSites = 0;
+let detectingSites = 0;
+for (const [via, seqs] of r.bannedSequences) {
+  for (const s of seqs) {
+    if (s.fromEdge === s.toEdge) continue;
+    if (bannedTriples.has(tripleKey(s.toEdge, via, s.fromEdge))) blindSites++;
+    else detectingSites++;
+  }
+}
+
 // --- breadth: landmarks and seeded random pairs ------------------------------------------------
 
 for (let i = 0; i < ROUTING_FIXTURES.length; i++) {
@@ -179,6 +204,10 @@ for (let i = 0; i < ROUTING_FIXTURES.length; i++) {
 console.log('=== cross-algorithm equality ===\n');
 console.log(`  graph            ${g.edgeFrom.length.toLocaleString('en-US')} directed edges`);
 console.log(`  restriction sites ${pairSites} via-node pair, ${viaWaySites} via-way sequence`);
+console.log(
+  `  via-way triples   ${detectingSites} order-ASYMMETRIC (can catch a reversed backward search), ` +
+    `${blindSites} symmetric (blind to it)`,
+);
 console.log(`  pairs            ${pairs.length}\n`);
 
 interface Stat { pairs: number; mismatches: number; settled: Record<string, number> }
@@ -253,6 +282,15 @@ for (const [group, st] of stats) {
   );
 }
 console.log(`\n  pairs with no route under any rung: ${bothNull} (agreement on absence is still agreement)`);
+
+// A suite that cannot fail is not evidence. If every via-way site became symmetric, this gate
+// would go green against a reversed backward search, so that condition is itself a failure.
+if (detectingSites === 0 && viaWaySites > 0) {
+  failures.push(
+    'every via-way triple is order-symmetric, so this suite is BLIND to a reversed-order backward ' +
+      'search. Add an asymmetric site before trusting a green run.',
+  );
+}
 
 if (failures.length > 0) {
   console.error(`\nequality gate FAIL: ${failures.length} mismatch(es). This is release blocking.`);

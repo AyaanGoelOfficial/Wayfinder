@@ -36,16 +36,34 @@ Update this in the same change that invalidates a line in it, never as a follow-
   largest-SCC filtering, from 1,893,860 deduped in-area nodes. That is an order of magnitude
   below the ~10^6 feared. CH still gets decided at gate 5 on measured p95 route compute under
   30 ms, not on this count, but nothing about this scale suggests it will be needed.
-- **THE ROUTING BUDGETS CANNOT BE JUDGED RIGHT NOW, and the blocker is the instrument, not the
-  router.** Three consecutive `npm run bench` runs of UNMODIFIED Dijkstra reported initial-route p95
-  of 284, 1829 and 1674 ms, while snap and search moved fivefold on code paths that were not touched
-  at all. The derived "time saved by A\*" column read +37.2%, then -4.3%, then -278.6% for identical
-  code. Settled counts were identical to the digit across all three. Third instance of this
-  contamination class here, after the server boot time and the tilemaker wall time. `timeIt` now
-  takes the MINIMUM of its repeats rather than the median, since interference is one-sided, and
-  `bench` prints a LOAD CANARY (observed/best) that labels the whole run as an upper bound when the
-  machine was busy. The last run canaried at 1.25, so its numbers are not quoted anywhere.
-  **Re-run on an idle machine before accepting or rejecting either budget.**
+- **`npm run bench` now REFUSES to run on an unsteady machine, and the diagnosis behind that is
+  measured rather than guessed.** Three consecutive runs of UNMODIFIED Dijkstra reported
+  initial-route p95 of 284, 1829 and 1674 ms, with the derived "time saved by A\*" column reading
+  +37.2%, then -4.3%, then -278.6% for identical code. Settled counts were identical to the digit
+  across all three. Third instance of this class here, after the server boot time and the tilemaker
+  wall time. Ruled out BY MEASUREMENT, so nobody repeats the hunt: **dev servers** (nothing
+  listening on 8080 or 5173, no node process alive during a contaminated window), **OneDrive** (not
+  running at all, despite the synced path), **turbo or thermal decay** (a fixed CPU kernel run 40
+  times drifted -14.3%, that is FASTER over the run), **core contention** (14.6% of an 8 core
+  machine busy, mostly Chrome, far too little on its own) and **cache contention** (a 32 MB
+  pointer-chase kernel measured 1.28x spread against the CPU kernel's 1.39x at the same moment).
+  What remains is that the machine is simply not equally fast at all times. So `scripts/lib/machine.ts`
+  times a fixed kernel immediately before the benchmark and `bench` exits non-zero above 1.8x spread
+  with a checklist of what to close, rather than printing numbers with a caveat nobody reads.
+  `timeIt` also takes the MINIMUM of its repeats, since interference is one-sided.
+- **BENCHMARKING ONE RUNG AT A TIME IS A BUG, and the preflight does not catch it.** A sequential
+  schedule attributes machine drift to whichever rung was running. Measured in a run whose preflight
+  PASSED at 1.54x: `dijkstra-h-discarded` does strictly more work than `dijkstra` and settles an
+  identical 531,999 states, yet came out **53% faster** on initial routes and **93% slower** on
+  re-routes in that same run. Both impossible. `bench` now times every rung back to back on the same
+  query and rotates the order by query index, so no rung permanently occupies the cache-cold first
+  slot. A preflight bounds the machine at one instant; interleaving is what survives drift across
+  the run.
+- **THE BIGGEST SINGLE CONTAMINATOR FOUND WAS THIS PROJECT'S OWN GATES.** Running `bench` straight
+  after `gate:equality`, which routes 190 pairs across three rungs over a 533k-edge graph, put the
+  preflight kernel at 235 to 838 ms against the 24 to 34 ms it measures when settled, a **10x**
+  baseline shift with -44.6% drift as it recovered. Leave the machine alone between a heavy gate and
+  a benchmark; the preflight now enforces it.
 - **A\* settles 34.5% fewer states on re-routes and 0.2% fewer on initial routes.** The initial-route
   figure is not a disappointment, it is the geometry: the p95 of that sample is set by the four
   pinned corner-to-corner queries, where the destination is at the far corner of the build area and

@@ -227,6 +227,12 @@ export class Router {
   private poppedCost = 0;
 
   /**
+   * Accumulator that exists ONLY so `dijkstra-h-discarded` genuinely evaluates the heuristic
+   * rather than having it optimised away. Never read by the router, never part of a result.
+   */
+  public hSinkForBenchmarks = 0;
+
+  /**
    * THE A\* HEURISTIC RATE: the cheapest seconds per metre any edge in this graph can cost.
    *
    * ADMISSIBILITY PROOF, and it must be read as covering all four cost terms rather than time
@@ -494,10 +500,14 @@ export class Router {
     // vertex would therefore bound a quantity the search never pays. Aiming at the point itself
     // makes `h` a bound on exactly what remains to be paid, refund included, because any path must
     // physically reach that point.
-    const useAStar = (opts?.algorithm ?? 'dijkstra') === 'astar';
+    const algorithm = opts?.algorithm ?? 'dijkstra';
+    const useAStar = algorithm === 'astar';
+    // Measurement mode: evaluate the heuristic, then discard it. See `RoutingAlgorithm`.
+    const discardH = algorithm === 'dijkstra-h-discarded';
+    const wantH = useAStar || discardH;
     let targetLat = 0;
     let targetLon = 0;
-    if (useAStar) {
+    if (wantH) {
       const pts = clipPolyline(this.shapeInTravelOrder(endEdge), 0, endFraction);
       const t = pts[pts.length - 1] as LngLat;
       targetLon = t[0];
@@ -515,7 +525,7 @@ export class Router {
     const hCache = this.hCache;
     const hStamp = this.hStamp;
     const h = (e: number): number => {
-      if (!useAStar) return 0;
+      if (!wantH) return 0;
       // The end-edge test stays OUTSIDE the cache deliberately. It is a property of the edge, not
       // of its head vertex, and other edges can share that vertex; caching a zero against the
       // vertex would hand it to them and quietly make the heuristic useless near the goal.
@@ -527,6 +537,18 @@ export class Router {
       }
       return hCache[v] as number;
     };
+    /**
+     * Adding zero times the heuristic is not the same as not computing it, and it is also not
+     * something an optimiser is free to elide, because the value is accumulated into a field the
+     * benchmark reads afterwards. That is what makes the measurement mode pay the heuristic's real
+     * cost while searching exactly as Dijkstra does.
+     */
+    const priority = (e: number, g0: number): number => {
+      const hv = h(e);
+      if (!discardH) return g0 + hv;
+      this.hSinkForBenchmarks += hv;
+      return g0;
+    };
 
     const startShape = g.edgeShape[startEdge] as number;
     for (const se of this.edgesOfShape.get(startShape) ?? [startEdge]) {
@@ -535,7 +557,7 @@ export class Router {
       this.distV[se * 2] = remaining;
       this.metaV[se * 4 + 2] = -1;
       this.metaV[se * 4 + 3] = gen;
-      this.push(se, remaining + h(se));
+      this.push(se, priority(se, remaining));
     }
 
     let bestEnd = -1;
@@ -617,11 +639,11 @@ export class Router {
           metaV[m + 3] = gen;
           distV[f * 2] = nd;
           metaV[m + 2] = e;
-          this.push(f, nd + h(f));
+          this.push(f, priority(f, nd));
         } else if (nd < (distV[f * 2] as number)) {
           distV[f * 2] = nd;
           metaV[m + 2] = e;
-          this.push(f, nd + h(f));
+          this.push(f, priority(f, nd));
         }
       }
     }
