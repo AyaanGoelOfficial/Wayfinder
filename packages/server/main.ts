@@ -251,10 +251,15 @@ app.get<{ Querystring: { from?: string; to?: string } }>(ROUTES.route, async (re
   }
 
   const tRoute = performance.now();
-  // A\*, not Dijkstra. Not a quality choice: `npm run gate:equality` proves the two return the
-  // identical path and cost on every restriction site in the graph, so this only decides how much
-  // of the graph gets settled on the way to the same answer.
-  const r = router.route(a!.edgeId, a!.fraction, b!.edgeId, b!.fraction, { algorithm: 'astar' });
+  // BIDIRECTIONAL, and this is not a quality choice. `npm run gate:equality` proves all four rungs
+  // return the identical PATH and cost on all 190 pairs, including every via-node and via-way
+  // restriction site in the graph, so the rung decides only how much of the graph gets settled on
+  // the way to the same answer.
+  //
+  // It is the only rung that meets the felt requirement. Measured at gate 5, urgent re-route p95:
+  // dijkstra 85.72 ms, astar 69.07 ms, bidirectional 27.46 ms against a 30 ms budget. Paired on
+  // identical queries it cuts 69.4% of settled states for 66.1% of the time.
+  const r = router.route(a!.edgeId, a!.fraction, b!.edgeId, b!.fraction, { algorithm: 'bidirectional' });
   const routeMs = performance.now() - tRoute;
   if (r === null) {
     return reply.code(404).send({

@@ -12,10 +12,10 @@ router, not a change in the dice.
 
 | Metric | Value | Threshold | Verdict |
 |---|---|---|---|
-| Distance, median absolute delta | 3.33% | 3.00% | FAIL |
+| Distance, median absolute delta | 3.70% | 3.00% | FAIL |
 | Distance, p95 absolute delta | 25.26% | 7.00% | FAIL |
-| Duration, median absolute delta | 11.41% | reported only | n/a |
-| Duration, p95 absolute delta | 27.44% | reported only | n/a |
+| Duration, median absolute delta | 11.29% | reported only | n/a |
+| Duration, p95 absolute delta | 26.19% | reported only | n/a |
 
 Compared 56 pairs (6 landmark, 50 random). Skipped 0.
 
@@ -121,11 +121,11 @@ cause is an open question rather than an accepted difference.
 | random 7 | random | 35.66 | 36.91 | -3.39% | 51.6 | 53.1 | -2.79% | OUTSIDE AREA |
 | random 8 | random | 67.88 | 66.81 | 1.59% | 67.5 | 60.2 | 12.05% | OUTSIDE AREA |
 | random 9 | random | 51.09 | 48.85 | 4.59% | 48.7 | 46.5 | 4.74% | OUTSIDE AREA |
-| random 10 | random | 59.37 | 60.74 | -2.26% | 68.7 | 53.3 | 28.85% | OUTSIDE AREA |
+| random 10 | random | 62.78 | 60.74 | 3.35% | 52.8 | 53.3 | -0.91% | OUTSIDE AREA |
 | random 11 | random | 75.00 | 80.91 | -7.31% | 69.5 | 56.2 | 23.56% | COST MODEL |
 | random 12 | random | 76.69 | 83.52 | -8.17% | 87.2 | 83.4 | 4.53% | OUTSIDE AREA |
 | random 13 | random | 36.93 | 34.28 | 7.74% | 39.6 | 43.0 | -7.96% | COST MODEL |
-| random 14 | random | 39.12 | 39.50 | -0.96% | 41.8 | 40.1 | 4.15% | COST MODEL |
+| random 14 | random | 39.50 | 39.50 | -0.01% | 40.6 | 40.1 | 1.33% | COST MODEL |
 | random 15 | random | 59.01 | 82.43 | -28.41% | 102.3 | 87.4 | 17.13% | COST MODEL |
 | random 16 | random | 43.60 | 43.62 | -0.05% | 50.1 | 47.4 | 5.73% | COST MODEL |
 | random 17 | random | 58.53 | 53.61 | 9.18% | 79.2 | 72.5 | 9.17% | OUTSIDE AREA |
@@ -159,8 +159,8 @@ cause is an open question rather than an accepted difference.
 | random 45 | random | 73.41 | 77.83 | -5.67% | 86.3 | 75.5 | 14.33% | OUTSIDE AREA |
 | random 46 | random | 75.80 | 81.08 | -6.52% | 85.5 | 80.9 | 5.66% | COST MODEL |
 | random 47 | random | 65.54 | 67.66 | -3.13% | 69.3 | 68.7 | 0.86% | COST MODEL |
-| random 48 | random | 47.75 | 47.58 | 0.34% | 48.3 | 41.3 | 16.99% | OUTSIDE AREA |
-| random 49 | random | 22.70 | 20.77 | 9.29% | 31.6 | 26.3 | 20.00% | COST MODEL |
+| random 48 | random | 44.33 | 47.58 | -6.84% | 46.1 | 41.3 | 11.68% | OUTSIDE AREA |
+| random 49 | random | 22.31 | 20.77 | 7.42% | 31.1 | 26.3 | 18.38% | COST MODEL |
 | random 50 | random | 40.32 | 40.42 | -0.24% | 41.1 | 42.4 | -2.98% | COST MODEL |
 
 ### Residuals by cause

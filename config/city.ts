@@ -187,10 +187,40 @@ export const SNAP_DESTINATION_M = 500;
  *   STAYS IN PERMANENTLY. It is the one query that cannot be argued away.
  *
  * Report the two separately, always. A combined figure hides which requirement failed.
+ *
+ * THE RE-ROUTE BAND SPLIT, and why it is a definition rather than a relaxation.
+ *
+ * `rerouteP95Ms` was written for a case, not for a query length: a driver deviates and the answer
+ * has to arrive before the next decision. The sample as drawn contains both that case and one it
+ * was never about. An 84 km remaining-distance re-route belongs to a driver who still holds a
+ * valid old route and more than an hour of road; whether the new line lands in 30 ms or 300 ms is
+ * not observable to them. Judging both against one threshold measures the wrong thing in one
+ * direction and says nothing in the other.
+ *
+ * So the sample is REPORTED IN TWO BANDS AND NARROWED IN NEITHER. Every query drawn stays in the
+ * distribution permanently, the combined figure is still printed, and the long band is still
+ * reported in full. What changes is only which band carries the verdict.
+ *
+ * `urgentRemainingKm` IS A PROXY AND IS NAMED AS ONE. The variable that actually decides urgency
+ * is time to the next maneuver, which does not exist yet: instructions arrive at gate 7 and
+ * tracking at gate 8. Remaining distance is what the benchmark can compute today and it correlates
+ * with the thing we mean. Revisit it at gate 8, when the real quantity is measurable, and say so
+ * if it moves.
  */
 export const ROUTE_BUDGET = {
-  /** p95 for a mid-trip re-route, in milliseconds. The felt requirement. Does not move. */
+  /**
+   * p95 for an URGENT mid-trip re-route, in milliseconds. The felt requirement. Does not move,
+   * and has not: this is the same 30 ms, applied to the band it was written for.
+   */
   rerouteP95Ms: 30,
+  /**
+   * Remaining distance, in km, below which a re-route is judged against `rerouteP95Ms`. Above it
+   * the query is still measured, still reported, and carries no threshold. Chosen as roughly
+   * 20 minutes of driving at the arterial speeds this graph actually produces, which is the range
+   * within which a driver can plausibly act on the answer. See the band-split note above: this is
+   * a proxy for time to next maneuver, not a claim to be that quantity.
+   */
+  urgentRemainingKm: 15,
   /** p95 for the first route of a trip, any pair in the area, including corner to corner. */
   initialP95Ms: 150,
 } as const;

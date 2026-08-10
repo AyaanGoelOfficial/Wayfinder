@@ -87,7 +87,7 @@ export interface ObjectiveConfig {
  * states and took 37% less time" cannot be read as evidence about the memory model, because the
  * per-state cost moved underneath the comparison.
  */
-export type RoutingAlgorithm = 'dijkstra' | 'astar' | 'dijkstra-h-discarded';
+export type RoutingAlgorithm = 'dijkstra' | 'astar' | 'dijkstra-h-discarded' | 'bidirectional';
 
 /** Per-request overrides of the objective. Everything omitted falls back to the config. */
 export interface RouteOptions {

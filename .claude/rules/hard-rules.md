@@ -54,6 +54,38 @@ reason, in the same message.
   zero because the regex was wrong, not because the data was empty; a control against known
   names returned 40 and exposed it.
 
+### Search correctness
+
+- **NEVER let route optimality depend on which search direction found the path.** Precision charter
+  item 11. Forward, backward and bidirectional searches over the same graph and objective must
+  return the same route; when they do not, the search STATE is wrong, not one of the searches. Fix
+  the state, never the comparison, and never relax `gate:equality` to accept the difference. Reason:
+  each direction is self-consistent while being wrong in a different place, so nothing that checks a
+  search against itself can catch it. Real case: a single-edge state with `from` read from the
+  parent array judged every via-way triple against the CHEAPEST arrival, and returned a route 51%
+  longer than a legal alternative. Evidence and the fix: `DESIGN.md` § Exact state at via-way
+  restrictions.
+- **NEVER compare two rungs and conclude which is correct from the comparison alone.** A cheaper
+  route is better if it is legal and a defect if it is not, and the disagreement cannot tell them
+  apart. `gate:equality` carries two validators for this: one checks a returned path against the
+  restriction tables directly, the other checks that a rung's reported cost equals its own returned
+  path's cost. Run the attribution before proposing a fix.
+
+### Measurement
+
+- **NEVER read the benchmark's load canary as a claim about absolute machine speed.** It is
+  `observed / best-of-N` within one run, so it measures CONSISTENCY, and a uniformly loaded
+  machine scores well on it. Measured: the run with the best canary of five (1.11) also had the
+  worst absolute times of five, with Dijkstra's initial p50 at 412.52 ms against 161.39 ms on the
+  quietest run. **Rung-against-rung comparison within a run is valid** because rungs are
+  interleaved per query under identical conditions. **Cross-run absolute comparison is not**, and
+  multiplying a within-run ratio by another run's absolute number produces a figure that looks
+  like a measurement and is not. Label any such figure an estimate, in the same sentence.
+- **NEVER report a wall time from this machine without "upper bound".** Two of the three CPU
+  co-tenants are the operator's own windows and the third is the agent running the benchmark, so
+  a genuinely quiet reading is not obtainable from inside a session. `scripts/lib/machine.ts`
+  carries the per-process evidence and the derivation of the canary threshold.
+
 ### Build and data
 
 - **NEVER shrink `BUILD_AREA` to fit a memory, time, or disk budget.** It is derived from

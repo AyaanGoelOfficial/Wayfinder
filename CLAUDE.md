@@ -51,7 +51,10 @@ only reason the route line and the drawn road can never disagree.
 Priorities, strictly ordered: **accuracy and precision** first (a route that is legal and
 near-optimal, a line exactly on the drawn road, a dot that rides the carriageway like it is
 on rails), then **execution quality**, then **clean UI**. Sloppiness anywhere is a bug, not
-a polish item. The banned defects are enumerated as the precision charter in `DESIGN.md`.
+a polish item. The banned defects are enumerated as the precision charter in `DESIGN.md`, items 1
+to 10 verbatim from the spec plus item 11 added at gate 5. They had been cited by number in eight
+folder files while living only outside the repo; folder rules referencing `charter item N` now
+resolve.
 
 ---
 
@@ -193,12 +196,10 @@ One line each; invariants live in the folder.
   storage, or splitting; never by quietly covering less city.
 - **Never widen a snap radius to make a test pass.** `SNAP_TRACKING_M` (40) and
   `SNAP_DESTINATION_M` (500) are different code paths, and crossing them is a bug.
-- **tilemaker is pinned to v2.4.0, and NOT to the newest release.** v3.1.0 ships zero release
-  assets. v3.0.0 ships assets whose Windows binary crashes here with `0xC0000409` before reading
-  any input, reproduced on a pristine extract with tilemaker's own config from a space-free path
-  under every flag combination. v2.4.0 runs, but predates PMTiles, so it writes a tile directory
-  and `packages/pipeline/tiles/pmtiles.ts` packs the archive. An existing release asset is not
-  evidence that the binary runs: check both.
+- **tilemaker is pinned to v2.4.0, NOT the newest release, and an existing release asset is not
+  evidence that the binary runs.** Both halves of the evidence are already recorded where they
+  bind: the crash and the pinning rule in `scripts/CLAUDE.md`, the tile-directory consequence in
+  `packages/pipeline/tiles/CLAUDE.md`.
 - **Duplicated state to change together:** a new `ErrorCode` touches `shared/index.ts`, the
   server handler that raises it, and the client state that renders its remedy.
 - `data/`, `tools/`, `dist/` and `node_modules/` are git-ignored and disposable.

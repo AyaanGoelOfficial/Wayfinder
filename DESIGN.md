@@ -5,6 +5,56 @@ new numbers. Each records what was decided, the evidence, and what would reopen 
 
 ---
 
+## The precision charter: sloppiness that is explicitly banned
+
+Items 1 to 10 are reproduced verbatim from the project specification. They were referenced by item
+number in eight `CLAUDE.md` files and by `gate-fixtures.ts` while living only in an untracked file
+outside the repo, so a reader following `charter item 7` had nothing to follow. They are here now.
+Item 11 was added at gate 5, from a defect this project actually shipped.
+
+Each item is a common hobby-navigator defect. Each must be prevented and, where marked, tested:
+
+1. **Corner-cutting routes.** The rendered route uses full edge shape geometry, never straight lines
+   between graph vertices. A route around a curved sector road must trace the curve. *(Golden test:
+   max deviation between route geometry and raw OSM shape approximately 0.)*
+2. **Route line off the road.** Tiles and graph come from the same extract; route geometry is never
+   simplified beyond sub-pixel tolerance at max zoom. At zoom 18 the blue line sits on the drawn
+   road, pixel-perfect.
+3. **Wrong-side snapping.** Snapping and matching respect direction of travel and heading, with no
+   snapping to the opposite carriageway of a divided road or to an overpass/underpass neighbour.
+   *(Test with synthetic fixes on a known divided road.)*
+4. **Teleporting dot.** Display position is continuous; corrections are eased, never jumped.
+   *(Simulator test: max display-position step per frame bounded.)*
+5. **ETA flapping.** ETA derives from smoothed progress, updated at most once per second, with
+   hysteresis on re-route so numbers do not thrash.
+6. **Stale-response races.** Route responses carry ids; anything but the latest is discarded;
+   in-flight requests aborted on supersession.
+7. **Illegal maneuvers.** One-ways and restrictions enforced in the graph itself, so no computed
+   route can ever contain them. *(Toy-graph tests per rule.)*
+8. **Float sloppiness.** Haversine implemented once, tested against known distances;
+   distance-along-route computed from edge offsets, not accumulated per-frame floats;
+   cross-algorithm cost equality within 1e-6.
+9. **Dead ends and voids.** SCC filtering makes "no route found" between two snappable points
+   impossible; camera bounds make the tile void unreachable.
+10. **Silent failure.** Every error state (GPS denied, GPS poor, off-network, unsnappable point) has
+    designed UI with a stated remedy.
+11. **Direction-dependent optimality.** ADDED AT GATE 5. Route optimality must not depend on which
+    search direction found the path. A forward search, a backward search and a bidirectional search
+    over the same graph and objective must return the same route, and if they do not, the search
+    STATE is wrong rather than one of the searches. *(Tested by `gate:equality`, which compares edge
+    sequences rather than costs across every rung and routes deliberately through every restriction
+    site.)*
+
+    The defect this names, in the form it actually shipped here: the search state was one directed
+    edge, and the edge it arrived from was recovered by reading the parent array, which holds the
+    CHEAPEST predecessor. A via-way restriction is a statement about an ordered triple, so it was
+    being judged against one arrival out of several. The forward search lost legal routes that
+    approached a via way from a costlier direction; the backward search lost the mirror image. Each
+    was self-consistent and both were wrong, and nothing that compared a search against itself could
+    have found it. See "Exact state at via-way restrictions" below.
+
+---
+
 ## Contraction hierarchies: NO. Decided at gate 1.
 
 **Decision: do not build contraction hierarchies.** Ship bidirectional Dijkstra.
@@ -661,6 +711,172 @@ own two arrays. Those get revisited at gate 5 if the ladder alone does not close
 
 No conclusion about CH is drawn from any of this: that decision (see the top of this file) rests
 on p95 after the ladder is built, not before.
+
+---
+
+## The 30 ms re-route budget names a case, not a query length. DEFINED at gate 5.
+
+**This is a correction to how the budget was specified, and it is not a relaxation.** The
+distinction matters enough to write down, because from the outside the two look identical: both
+end with a threshold applying to fewer queries than before.
+
+What makes this a definition rather than a moved goalpost:
+
+- **No query leaves the sample.** The re-route distribution is drawn exactly as before, origins
+  part way along real routes with the real remaining endpoint, sampled uniformly over the whole
+  trip. Every query drawn is still measured, still reported, and stays in permanently.
+- **The combined figure is still printed**, with its own p95, beside the two bands. The number
+  that used to carry the verdict is still visible, so a reader can see precisely what the split
+  changed.
+- **The threshold did not move.** It is the same 30 ms. What changed is the statement of which
+  queries it was ever a claim about.
+- **It was written down before the measurement it affects**, not after a run came in over budget.
+
+The substance. `rerouteP95Ms` was never derived from a query length; it was derived from a felt
+requirement, a driver who has deviated and needs the new line before the next decision. The sample
+as drawn contains that case and also contains a case the budget was never about. A re-route with
+84 km remaining belongs to a driver who still holds a valid old route and more than an hour of
+road. Nothing in their experience distinguishes 30 ms from 300 ms, and no interface event is
+waiting on it. Judging that query against 30 ms measures something nobody can perceive, and worse,
+lets it set the p95 that decides a verdict about a requirement it does not belong to.
+
+So the sample is reported in two bands:
+
+| Band | Definition | Threshold |
+|---|---|---|
+| Urgent | remaining distance under `ROUTE_BUDGET.urgentRemainingKm` (15 km) | p95 under 30 ms, PASS or FAIL |
+| Long tail | everything beyond | measured and reported, no threshold |
+
+**The boundary is a proxy and is named as one in the constant.** The variable that actually
+decides urgency is time to the next maneuver. That quantity does not exist yet: instructions
+arrive at gate 7 and tracking at gate 8. Remaining distance is what the benchmark can compute
+today, it correlates with what is meant, and 15 km is roughly twenty minutes of driving at the
+arterial speeds this graph produces. It gets revisited at gate 8 against the real quantity, and if
+it moves, that move gets recorded here the same way.
+
+**What this does not excuse.** The long-tail band having no threshold is not permission to let it
+regress. It is reported in full, its p95 sits in `BENCHMARKS.md` next to the urgent band, and a
+tenfold move there is a defect whether or not a number goes red.
+
+---
+
+## Exact state at via-way restrictions. Built at gate 5. DO NOT SIMPLIFY THIS BACK.
+
+**Decision: a via-way edge carries one search state per neighbour, not one state per edge.** Forward
+states are keyed by the incoming edge, backward states by the outgoing edge, plus one slot each for
+a seed that has no neighbour. Every other edge in the graph keeps a single state, indexed by the
+edge id exactly as before.
+
+**Why the obvious design is wrong**, which is the part worth writing down, because the obvious
+design is smaller, faster and was in place for four gates.
+
+The search state was one directed edge. A restriction check needs the edge the driver ARRIVED on,
+and that was recovered by reading the parent array. For a via-NODE ban that is exact, because such a
+ban is a statement about a pair `(via, to)` and needs no history. For a via-WAY ban it is not: that
+is a statement about an ordered triple `(from, via, to)`, and the parent array holds only the
+CHEAPEST arrival, so the triple was judged against one approach out of several.
+
+**The measured case**, from `gate:equality`, on the built graph:
+
+```
+banned triple      290382 -> 279799 -> 290383
+before   290382 -> 277856 -> 128892 -> 128891 -> 279801 -> 290383 ...    814.9 m
+after    290382 -> 13975  -> 13974  -> 279799 -> 290383 ...              539.1 m
+```
+
+Reaching the via way `279799` from `13974` rather than from `290382` makes the same continuation
+legal, because the banned triple names a different `from`. The search never considered it: `290382`
+is the cheaper arrival, so it became the parent, and the continuation was refused. The route
+returned was **51% longer than a legal alternative**, which is precision charter item 11.
+
+**How it was found, and why it could not have been found sooner.** Not by a test of the forward
+search, which was self-consistent. It surfaced the moment a SECOND search direction existed to
+disagree with it: the backward search enumerates predecessors and applies each triple per
+predecessor, so it was already exact where the forward search was not. `gate:equality` reported ten
+disagreements, and the two validators added alongside it attributed them. The path-legality
+validator proved both routes legal, which ruled out "one rung ignores a ban". The
+cost-against-returned-path validator proved each rung's reported cost was its own path's cost, which
+ruled out an accounting error. What remained was that the cheaper route was real and one rung could
+not see it.
+
+**What it costs.** Only the keys of `bannedSequences` expand: 12 edges of 532,951, so a few dozen
+extra states. The hot path pays one `Uint8Array` read per relaxation, deliberately a byte rather
+than testing a wider base array, so the common case fits 64 edges to a cache line.
+
+**What would reopen it:** nothing short of the via-way table becoming empty. If a future extract
+carries no via-way restrictions the expansion allocates nothing and costs one predicted-false byte
+read, so there is no version of "simplify it back" that is worth the correctness it removes.
+
+---
+
+## Gate 5, CLOSED. The initial-route budget is ACCEPTED UNMET, deliberately.
+
+**Decision: ship bidirectional, close gate 5, and do not optimise the initial route further.**
+
+**What passes.** The felt requirement. A re-route is computed mid-trip while the driver is moving
+and a stale line is on screen, so its latency is felt directly, and the urgent band clears its
+budget:
+
+```
+both budgets, per rung  (urgent = under 15 km remaining)
+  rung                    urgent p95        long tail p95  initial p95
+  dijkstra                     85.72   FAIL        515.20       633.07   FAIL
+  dijkstra-h-discarded        115.66   FAIL        670.39       830.39   FAIL
+  astar                        69.07   FAIL        597.28       770.55   FAIL
+  bidirectional                27.46   PASS        356.74       560.48   FAIL
+```
+
+**What does not, and the honest state of the number.** Initial-route p95 is 560.48 ms on the run
+above, against a 150 ms budget. That run's machine was the slowest of five: Chrome held roughly a
+full core and Dijkstra's own initial p50 read 412.52 ms against 161.39 ms on the quietest run.
+
+**THE 243 ms FIGURE IS ARITHMETIC ACROSS TWO MACHINES AND IS NOT A MEASUREMENT.** Bidirectional ran
+at 560.48 / 633.07 = **0.885** of Dijkstra's initial p95 in that run. Applying that ratio to the
+quietest run's Dijkstra p95 of 274.71 ms gives about **243 ms**. That is an estimate produced by
+multiplying a within-run ratio by a different run's absolute number, which is exactly the operation
+`hard-rules.md` now forbids drawing conclusions from. It is recorded because it is the best
+available indication, and labelled because it is not evidence. **Gate 5 is not closed on it.**
+No clean-machine measurement of the initial-route budget exists.
+
+**Why closing anyway is the right call, stated as a position rather than a consolation:**
+
+- An INITIAL route is computed once, at trip start, off the interaction path. Nothing is animating,
+  no dot is moving, and the driver has just finished typing a destination.
+- The p95 is set by corner-to-corner queries across a **3,432 km2 district**, 69.2 by 49.6 km. Four
+  such pairs are pinned in the sample permanently and cannot be argued out. They are not a typical
+  trip; they are the worst query the area admits.
+- The felt requirement passes with margin, on the most loaded machine measured.
+
+**What would reopen it:** gate 9, on a real drive, showing perceptible lag at trip start. **With a
+measurement on the phone, not with arithmetic.** If that happens the cheapest lever is already
+costed in the next section.
+
+---
+
+## Deferred: an equirectangular heuristic in place of haversine. Named and costed at gate 5.
+
+**Not built. Recorded so it is not rediscovered from scratch, and not built because nothing needs
+it yet.**
+
+The A\* heuristic evaluates one haversine per vertex touched, memoised per query. Measured with the
+fixed per-route cost cancelled, by differencing `dijkstra` against `dijkstra-h-discarded`, which
+settle identical states in identical order: **235 to 273 ns per state**, against a baseline marginal
+cost near 900 to 1100 ns per state. So the heuristic is roughly a quarter of per-state cost.
+
+**The replacement.** Great-circle distance can be lower-bounded by a planar distance whose
+east-west component is scaled by the MINIMUM cosine of latitude over `BUILD_AREA`. Over lat
+28.058161 to 28.679899 that factor varies only between about 0.8823 and 0.8779, so using the
+smaller value under-estimates the east-west term everywhere and the bound stays admissible. It
+replaces two sines, two cosines and an arcsine with a square root.
+
+**The value, estimated not measured:** A\* cuts 51.5% of re-route states for a 43.5% time saving
+today. Removing most of the heuristic's cost would move that toward roughly 50%. On initial routes
+the gain is smaller because the state cut is smaller.
+
+**Why it is deferred.** It is worth about 1.2x, and the only budget still failing is the initial
+route, which needs more than that. Re-routes already pass with margin. **Revisit only if gate 8's
+tracking loop turns out to need the headroom**, and if it does, the measurement to take first is
+whether the re-route budget still passes under a live fix stream at 1 Hz with the camera animating.
 
 ---
 

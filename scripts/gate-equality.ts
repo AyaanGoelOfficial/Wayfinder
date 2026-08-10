@@ -49,7 +49,12 @@ const snap = new SnapIndex(g, BUILD_AREA);
 
 // `dijkstra-h-discarded` is in here on purpose: it is a measurement mode, and the claim that it
 // searches exactly as Dijkstra does is only worth anything if something checks it.
-const ALGORITHMS: readonly RoutingAlgorithm[] = ['dijkstra', 'astar', 'dijkstra-h-discarded'];
+const ALGORITHMS: readonly RoutingAlgorithm[] = [
+  'dijkstra',
+  'astar',
+  'dijkstra-h-discarded',
+  'bidirectional',
+];
 const routers = new Map<RoutingAlgorithm, Router>();
 for (const a of ALGORITHMS) routers.set(a, new Router(g, r, TURN_COST, OBJECTIVE));
 
@@ -215,6 +220,37 @@ const stats = new Map<string, Stat>();
 const failures: string[] = [];
 let bothNull = 0;
 
+/**
+ * IS THIS PATH LEGAL, judged against the restriction tables directly rather than against another
+ * rung. Returns the offending manoeuvre, or null.
+ *
+ * Agreement and legality are different questions and only this one has a right answer. When two
+ * rungs disagree, "which is correct" is unanswerable from the disagreement alone: the cheaper route
+ * is the better one if it is legal and a defect if it is not. Without this, a rung that quietly
+ * drives through a banned turn looks exactly like a rung that found a smarter way round.
+ *
+ * The FIRST edge carries no triple check. A route's opening edge has no predecessor inside the
+ * route, and the search represents that as `from = -1`, which matches no recorded triple. That is a
+ * real limitation of a single-edge search state, not an oversight here: a driver arriving at the
+ * start edge did come from somewhere, and we do not know where.
+ */
+const illegalStep = (edges: readonly number[]): string | null => {
+  for (let i = 0; i + 1 < edges.length; i++) {
+    const via = edges[i] as number;
+    const to = edges[i + 1] as number;
+    const from = i === 0 ? -1 : (edges[i - 1] as number);
+    const pair = r.banned.get(via);
+    if (pair !== undefined && pair.has(to)) return `pair ${via} -> ${to}`;
+    const seq = r.bannedSequences.get(via);
+    if (seq !== undefined) {
+      for (const s of seq) {
+        if (s.toEdge === to && s.fromEdge === from) return `triple ${from} -> ${via} -> ${to}`;
+      }
+    }
+  }
+  return null;
+};
+
 for (const p of pairs) {
   const results = ALGORITHMS.map((a) => {
     const res = (routers.get(a) as Router).route(p.startEdge, p.startFraction, p.endEdge, p.endFraction, {
@@ -243,6 +279,20 @@ for (const p of pairs) {
     continue;
   }
 
+  // Does the cost a rung REPORTS equal the cost of the path it RETURNS? Checked for every rung on
+  // every pair, not only on mismatches. A search that reports one number and returns a path worth
+  // another is the failure mode that makes every comparison above meaningless, and it is invisible
+  // to a rung-against-rung check because both sides would be reporting the same broken quantity.
+  for (const { a, res } of results) {
+    if (res === null) continue;
+    const parts = res.driveSeconds + res.turnSeconds + res.distanceSeconds + res.tollSeconds;
+    if (Math.abs(parts - res.seconds) > COST_TOLERANCE) {
+      failures.push(
+        `${p.label}: ${a} reports ${res.seconds.toFixed(9)} but its own path is worth ${parts.toFixed(9)}`,
+      );
+    }
+  }
+
   for (const { a, res } of results) {
     st.settled[a] = (st.settled[a] ?? 0) + (res === null ? 0 : res.settled);
     if (a === base.a) continue;
@@ -253,8 +303,33 @@ for (const p of pairs) {
     }
     if (Math.abs(res.seconds - baseRes.seconds) > COST_TOLERANCE) {
       st.mismatches++;
+      // Attribute the disagreement instead of only reporting it. A cheaper route that is ILLEGAL is
+      // a defect in that rung; a cheaper route that is LEGAL means the baseline was the conservative
+      // one, and the two say different things about what to fix.
+      const bad = illegalStep(res.edges);
+      const badBase = illegalStep(baseRes.edges);
+      // WHERE do they part company, and is that junction a restriction site? If the paths diverge
+      // at a restricted edge, the cause is the single-edge search state: `from` is read from the
+      // parent array, so a triple is judged against the CHEAPEST predecessor rather than against
+      // the one the route would actually use. If they diverge at an ordinary edge, that
+      // explanation is wrong and something else is going on.
+      let d = 0;
+      while (d < res.edges.length && d < baseRes.edges.length && res.edges[d] === baseRes.edges[d]) d++;
+      const lastCommon = d === 0 ? -1 : (res.edges[d - 1] as number);
+      const where =
+        lastCommon === -1
+          ? 'diverge at the seed'
+          : `diverge after edge ${lastCommon}, ${r.edgeRestricted[lastCommon] === 1 ? 'RESTRICTED' : 'unrestricted'}`;
+      const verdict =
+        bad !== null
+          ? `${a} path is ILLEGAL at ${bad}`
+          : badBase !== null
+            ? `dijkstra path is ILLEGAL at ${badBase}`
+            : res.seconds < baseRes.seconds
+              ? `both legal, ${a} CHEAPER, ${where}`
+              : `both legal, dijkstra cheaper, ${where}`;
       failures.push(
-        `${p.label}: cost ${a} ${res.seconds.toFixed(9)} against dijkstra ${baseRes.seconds.toFixed(9)}`,
+        `${p.label}: cost ${a} ${res.seconds.toFixed(9)} against dijkstra ${baseRes.seconds.toFixed(9)}, ${verdict}`,
       );
       continue;
     }
