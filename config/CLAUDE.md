@@ -2,8 +2,9 @@
 
 - **NO HAND-PICKED COORDINATES, EVER.** Every number in `BUILD_AREA` is derived from the
   OSM boundary relation named in `BOUNDARY_RELATION`, buffered by `BUFFER_KM`. If a number
-  here cannot be traced to a relation id and a fetch date, it is a bug. Regenerate with
-  `npm run derive:bbox` rather than editing by hand. Reason: a guessed rectangle silently
+  here cannot be traced to a relation id and a fetch date, it is a bug. **`npm run derive:bbox` does not exist**, so
+  recompute from `RELATION_BBOX` and `BUFFER_KM` by hand and let
+  `tests/config/fixtures.test.ts` confirm it, or build the script. Reason: a guessed rectangle silently
   truncates the city, and a truncated graph fails as "no route found" far from its cause.
 - **Nothing outside this folder may hardcode Greater Noida.** Retargeting the system at
   another city is editing this file and nothing else. A grep for `28.` or `77.` outside

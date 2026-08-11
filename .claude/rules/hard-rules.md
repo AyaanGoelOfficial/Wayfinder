@@ -95,8 +95,11 @@ reason, in the same message.
 - **NEVER widen a snap radius or relax a tolerance to turn a gate green.** `SNAP_TRACKING_M`
   and `SNAP_DESTINATION_M` are separate code paths, not one tunable. Fix the matcher, the
   data, or the individual fixture, and record why.
-- **NEVER hand-edit a derived constant.** `BUILD_AREA` comes from `npm run derive:bbox`.
-  Regenerate rather than typing coordinates.
+- **NEVER hand-edit a derived constant.** `BUILD_AREA` is derived from `RELATION_BBOX` plus
+  `BUFFER_KM`. **`npm run derive:bbox` DOES NOT EXIST** and never did, so the remedy this rule
+  used to name is unavailable; the guard that actually holds is `tests/config/fixtures.test.ts`,
+  which recomputes every coordinate and goes red on a hand edit. Recompute by that formula, or
+  build the script. A rule whose remedy is a missing command is the defect this bullet now avoids.
 - **NEVER hand-edit anything in `data/` or `tools/`.** Both are git-ignored and disposable.
   Regenerate via `npm run build-city` and `npm run setup:tools`.
 - **NEVER commit an extract, a `.pmtiles`, or any built artifact.** They are hundreds of MB

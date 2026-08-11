@@ -19,7 +19,7 @@ lives in that folder's own `CLAUDE.md`. The rules for that split, including the
 | `.claude/rules/instructions.md` | Touching any `CLAUDE.md`, rule, skill, or hook | Which container an instruction belongs in, the cap, cwd, maintenance |
 | `.claude/skills/add-feature/` | On invoke | The ordered touchpoint procedure |
 | `.claude/skills/ui-rationale/` | On invoke | Why the UI numbers hold. The measured evidence base |
-| `.claude/settings.json` | Executed, never in context | Hooks: the rules that must hold mechanically |
+| `.claude/settings.json` | Executed, never in context | Hooks. NOT CREATED YET: no hook exists |
 | `<folder>/CLAUDE.md` | When a file in that folder is read | That folder's job, invariants, gotchas |
 
 **Intended cwd:** the repo root. This matters: a `CLAUDE.md` loads automatically only if it
@@ -63,7 +63,7 @@ resolve.
 ```bash
 npm run setup:tools      # vendor tilemaker v2.4.0 into tools/ (git-ignored). v3.x does not run here
 npm run fetch:extracts   # download both zone extracts + verify live md5 -> data/
-npm run derive:bbox      # regenerate BUILD_AREA from the OSM boundary relation
+npm run derive:bbox      # NOT BUILT. See Conventions: the guard is a test, not this command
 npm run build-city       # extracts -> graph + places + tiles. Does NOT re-download
 npm run serve            # Fastify. Fails loudly if artifacts are missing
 npm run dev              # client dev server (HTTPS, for real GPS on a phone)
@@ -100,8 +100,8 @@ npm run experiment:speeds # A/B a speed table over the same 56 pairs. No rebuild
 npm run experiment:turns  # A/B the turn cost model. Reports SHAPE overlap, not just the delta
 npm run experiment:objective # distance and toll preferences. Route sanity BEFORE divergence
 npm run bench            # p50/p95/p99 for route, snap, search -> BENCHMARKS.md
-npm run verify:browser   # console, visual, network, GPS scenarios, throttled traces
-npm run acceptance       # everything, one pass/fail table, every charter item mapped
+npm run verify:browser   # NOT BUILT until gate 8. Console, visual, network, GPS, throttled
+npm run acceptance       # NOT BUILT until gate 9. One pass/fail table, every charter item
 ```
 
 **There is no lint step.** TypeScript strict plus the copy gate is the whole static check;

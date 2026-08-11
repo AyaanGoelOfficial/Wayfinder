@@ -17,8 +17,10 @@ filesystem, and `tools/`. Nothing in `packages/` may import from here.
 - **Every script that fetches from the network verifies what it got.** Size, checksum, or a
   parse. A silent truncated download becomes a silently truncated city, and that failure
   surfaces thousands of lines later as "no route found".
-- **`derive-bbox.ts` is the only thing allowed to write `BUILD_AREA` into `config/city.ts`.**
-  Hand-editing that constant is a defect; `tests/config/fixtures.test.ts` recomputes it from
-  `RELATION_BBOX` and will go red.
+- **`derive-bbox.ts` DOES NOT EXIST, though `npm run derive:bbox` and three instruction files
+  referenced it.** Nothing here writes `BUILD_AREA` into `config/city.ts`. The constant is still
+  guarded, by `tests/config/fixtures.test.ts`, which recomputes it from `RELATION_BBOX` and goes
+  red on a hand edit. If this script gets built it becomes the only writer; until then the test is
+  the whole enforcement.
 - **Long-running scripts print progress with counts, not spinners.** These run for minutes
   over a 546 MB input, and a number that stops moving is the only usable failure signal.
