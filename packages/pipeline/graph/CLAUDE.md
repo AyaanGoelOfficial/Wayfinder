@@ -34,6 +34,21 @@ structural: if this folder is right, no route the engine computes can be illegal
   posted at 60 would outrank a tertiary road. A `*_link` ranks WITH its parent, so leaving a
   motorway by its own slip road is not charged as a demotion. It rides in the artifact's u8 block,
   which is what made the format v2 bump.
+- **A ROAD'S OWN RAMPS BELONG TO IT, and ONLY anonymous `*_link` ways are eligible.** Interchange
+  ramps are tagged `toll=yes` and usually carry no `name` and no `ref`, so name matching drops them
+  to `unpriced`, and since route confidence is the weakest link that dragged EVERY EPE route down.
+  `attributeTollRamps` claims them by SHARED NODE, which is exact where a radius would need tuning.
+  A way carrying a `name` or a `ref` is asserting an identity and geometry does not overrule it: a
+  first cut without that guard absorbed the Delhi Western Peripheral and NH148NA into EPE, and the
+  symptom was an unpriced total of exactly 0.00 km, which reads as success.
+- **BOTH KINDS OF TOLL BOOTH ARE MARKED, mainline and ramp, and they bill differently.** Marking
+  only mainline barriers left the router free to leave a gate-charged expressway at one interchange
+  and rejoin past the plaza for nothing, which it did, over 22.0 km. Distinguishing the two rather
+  than merging them is what still avoids billing one plaza several times.
+- **EPE chainage is MEASURED, never matched by village name.** `epe.ts` chains the mainline and
+  anchors on a fitted constant; `npm run calibrate:epe` is the derivation and REFUSES on a drifting
+  residual. OSM names three of eleven plazas and the villages it carries sit up to 18 km off the
+  road, so a name match here is inference wearing the clothes of observation.
 - **NO RESTRICTION IS SILENTLY DROPPED.** Every relation that cannot be resolved is counted by
   reason in `RestrictionStats`. A discarded restriction is an illegal turn the router will take
   happily, surfacing months later as a routing bug rather than here as a data-handling one.

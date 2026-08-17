@@ -23,7 +23,25 @@
  * runs for heap-ordering reasons. Golden routes depend on this.
  */
 import { haversineM } from '../shared/geo.ts';
-import type { LngLat, ObjectiveConfig, RouteOptions, TurnCostConfig } from '../shared/index.ts';
+import { EPE_SEGMENT_NONE, TOLL_GATE_MAINLINE, TOLL_GATE_RAMP } from '../shared/graphfile.ts';
+import { tollDisplayOf } from '../shared/toll.ts';
+
+/**
+ * Two mainline booth nodes closer than this belong to ONE plaza, so a crossing is billed once.
+ *
+ * Not a tuning knob: the gap between real barriers on this network is tens of kilometres, and the
+ * gap between booth nodes of one plaza is hundreds of metres, so any threshold between the two
+ * gives the same answer. 2 km sits in the middle of that gap by two orders of magnitude.
+ */
+const SAME_PLAZA_M = 2000;
+import type {
+  LngLat,
+  ObjectiveConfig,
+  RouteOptions,
+  TollConfidence,
+  TollDisplay,
+  TurnCostConfig,
+} from '../shared/index.ts';
 import { buildTurnCosts } from './turncost.ts';
 import type { TurnCosts } from './turncost.ts';
 
@@ -98,6 +116,12 @@ export interface RoutableGraph {
   readonly edgeClassRank: Uint8Array;
   /** 1 when the edge charges a toll. What that is WORTH lives in the objective, not here. */
   readonly edgeToll: Uint8Array;
+  /** Which toll road charges this edge, as an id into `ObjectiveConfig.tollRoads`. 0 for none. */
+  readonly edgeTollRoad: Uint8Array;
+  /** What toll point this edge contains: 0 none, 1 mainline barrier, 2 ramp booth. */
+  readonly edgeTollGate: Uint8Array;
+  /** Which inter-plaza span this edge lies in on a closed-system road; 255 when not applicable. */
+  readonly edgeTollSegment: Uint8Array;
   readonly shapeOffset: Int32Array;
   readonly shapeLat: Int32Array;
   readonly shapeLon: Int32Array;
@@ -132,6 +156,24 @@ export interface RouteResult {
   readonly tollSeconds: number;
   /** Metres of this route running on tolled roads. Reported so the flag can be sanity checked. */
   readonly tollMetres: number;
+  /**
+   * WHAT THE DRIVER PAYS, in rupees, priced per road by that road's own mechanism.
+   *
+   * NOT `tollSeconds / secondsPerRupee`, and the difference is structural rather than a rounding.
+   * The search charges a smooth per-kilometre proxy because that is the only shape a shortest path
+   * can minimise; this figure is the billed truth, computed once over the chosen path by each
+   * road's exact mechanism, which is a barrier fee for one road and a published entry-exit fare for
+   * another. Neither mechanism is additive over edges. See `TollRoad.searchRatePerKm` and the
+   * pattern note in `DESIGN.md`.
+   */
+  readonly tollCost: number;
+  /**
+   * How certain `tollCost` is, taken as the weakest link across every tolled road the route uses.
+   * Decided per continuous RUN, since whether a ramp was involved is a property of the whole run.
+   */
+  readonly tollConfidence: TollConfidence;
+  /** Whether, and how, `tollCost` may be rendered. Derived once, here, never at a call site. */
+  readonly tollDisplay: TollDisplay;
   /**
    * The turn penalty portion of `seconds`, alone.
    *
@@ -283,6 +325,13 @@ export class Router {
    */
   private readonly distSecs: Float64Array;
 
+  /**
+   * The toll charge per edge in seconds, precomputed for the same reason `distSecs` is: with two
+   * mechanisms and a per-road rate it is no longer recoverable from metres, and deriving it from
+   * the total would report a number the search never charged.
+   */
+  private readonly tollSecs: Float64Array;
+
   /** The objective in force. Held so per-request options can be resolved against it. */
   private readonly obj: ObjectiveConfig;
 
@@ -371,11 +420,11 @@ export class Router {
     this.turns = turnCost === undefined ? null : buildTurnCosts(g, turnCost);
     // Defaulting to all-zero preferences keeps every toy-graph test asserting on pure travel time,
     // which is what makes a failure there mean the SEARCH is wrong rather than the objective.
-    this.obj = objective ?? { secondsPerKm: 0, tollReluctanceSecondsPerKm: 0, avoidTollsByDefault: false };
+    this.obj = objective ?? { secondsPerKm: 0, secondsPerRupee: 0, avoidTollsByDefault: false };
     if (this.obj.qualityByRank !== undefined && this.obj.qualityByRank.some((q) => !(q >= 0))) {
       throw new Error('OBJECTIVE quality weights must be non-negative or A* is no longer admissible.');
     }
-    if (this.obj.secondsPerKm < 0 || this.obj.tollReluctanceSecondsPerKm < 0) {
+    if (this.obj.secondsPerKm < 0 || this.obj.secondsPerRupee < 0) {
       // Same reason the turn costs check: a negative preference does not fail, it silently breaks
       // A* admissibility and returns routes that are wrong rather than routes that are missing.
       throw new Error('OBJECTIVE costs must be non-negative or A* is no longer admissible.');
@@ -495,7 +544,32 @@ export class Router {
     // branched on during relaxation: an edge's toll status cannot change between queries, only
     // whether the query TOLERATES it, and that is a separate check.
     const perM = this.obj.secondsPerKm / 1000;
-    const tollPerM = this.obj.tollReluctanceSecondsPerKm / 1000;
+    /**
+     * TOLL SECONDS PER EDGE: THE SEARCH PROXY, and deliberately not what the driver is billed.
+     *
+     * ⛔ A SHORTEST PATH CAN ONLY MINIMISE AN ADDITIVE COST, and neither real mechanism here is
+     * additive. A barrier fee is a step function of position; an entry-exit fare is a function of
+     * the whole run. Putting a barrier fee on the one edge that contains the plaza IS additive and
+     * was tried, and it produced a measured defect: 140 rupees landed on a single 604 m edge as a
+     * 37 minute penalty, and the router answered by leaving the expressway at an interchange and
+     * rejoining past the barrier. The cost model was correct edge by edge and wrong as a route.
+     *
+     * So every road contributes a SMOOTH per-kilometre rate here, close to its own real average,
+     * and `priceTolls` computes the billed truth once over the chosen path by that road's exact
+     * mechanism. `DESIGN.md` states the pattern once under "The search proxy and the billed truth".
+     * The two agree closely and are never required to agree exactly.
+     */
+    const rupeesPerM = new Float64Array(256);
+    for (const r of this.obj.tollRoads ?? []) {
+      if (r.id < 0 || r.id > 255) throw new Error(`TOLL_ROADS id ${r.id} is out of the u8 range the artifact stores.`);
+      if (r.ratePerKm < 0 || r.feeRupees < 0 || r.searchRatePerKm < 0) {
+        // Same reason turn costs and quality weights are checked: a negative toll does not fail
+        // loudly, it silently breaks A* admissibility and returns routes that are wrong.
+        throw new Error(`TOLL_ROADS entry ${r.key} has a negative amount; A* is no longer admissible.`);
+      }
+      rupeesPerM[r.id] = r.searchRatePerKm / 1000;
+    }
+    const secPerRupee = this.obj.secondsPerRupee;
     // The quality weight is resolved to a per-metre rate PER CLASS RANK once, here, so the hot
     // loop never indexes a second table. An absent weights array means a flat rate on every class,
     // which is the pre-quality objective and what the toy graphs want.
@@ -503,6 +577,7 @@ export class Router {
     const perMByRank = new Float64Array(256);
     for (let r = 0; r < 256; r++) perMByRank[r] = perM * (quality === undefined ? 1 : (quality[r] ?? 1));
     this.distSecs = new Float64Array(n);
+    this.tollSecs = new Float64Array(n);
     this.edgesOfShape = new Map();
     for (let e = 0; e < n; e++) {
       const lenM = g.edgeLengthM[e] as number;
@@ -510,7 +585,10 @@ export class Router {
       this.driveSecs[e] = drive;
       const dist = lenM * (perMByRank[g.edgeClassRank[e] as number] as number);
       this.distSecs[e] = dist;
-      this.secs[e] = drive + dist + (g.edgeToll[e] === 1 ? lenM * tollPerM : 0);
+      const road = g.edgeTollRoad[e] as number;
+      const toll = road === 0 ? 0 : lenM * (rupeesPerM[road] as number) * secPerRupee;
+      this.tollSecs[e] = toll;
+      this.secs[e] = drive + dist + toll;
       const s = g.edgeShape[e] as number;
       const list = this.edgesOfShape.get(s);
       if (list) list.push(e);
@@ -976,7 +1054,8 @@ export class Router {
     const driveSeconds = sumTrimmed((e) => this.driveSecs[e] as number);
     const tollMetres = sumTrimmed((e) => (g.edgeToll[e] === 1 ? (g.edgeLengthM[e] as number) : 0));
     const distanceSeconds = sumTrimmed((e) => this.distSecs[e] as number);
-    const tollSeconds = (tollMetres / 1000) * this.obj.tollReluctanceSecondsPerKm;
+    const tollSeconds = sumTrimmed((e) => this.tollSecs[e] as number);
+    const { tollCost, tollConfidence } = this.priceTolls(edges, firstFraction, endFrac);
 
     // Recovered from the chosen path rather than accumulated during the search: the search
     // relaxes an edge many times and only the surviving parent chain is the route, so a running
@@ -1007,6 +1086,9 @@ export class Router {
       distanceSeconds,
       tollSeconds,
       tollMetres,
+      tollCost,
+      tollConfidence,
+      tollDisplay: tollDisplayOf(tollConfidence, tollMetres),
       turnSeconds,
       metres,
       geometry,
@@ -1363,6 +1445,164 @@ export class Router {
     const lastEdge = edges[edges.length - 1] as number;
     const endFrac = lastEdge === endA ? fracA : fracB;
     return this.finish(edges, firstFraction, endFrac, mu, settled, relaxed, restrictionsApplied);
+  }
+
+  /**
+   * WHAT THE DRIVER PAYS, priced per road by that road's own mechanism, plus how much of that
+   * figure we are willing to show.
+   *
+   * Runs once per query over the chosen path, never during the search. That is what lets it do the
+   * two things a shortest-path cost cannot:
+   *
+   *   THE FLOOR. A closed system bills `max(floor, rate * km)` for a run, which is not additive
+   *   over edges. Here the path is known, so each CONTINUOUS RUN on a road can be measured and the
+   *   floor applied to it. A route that leaves a tolled road and rejoins it pays twice, which is
+   *   what a closed system actually does, so runs are counted separately rather than summed.
+   *
+   *   THE CONFIDENCE. It is the WEAKEST LINK across every tolled road used, not an average and not
+   *   the first one found. One `unpriced` road anywhere on the route means no rupee figure is
+   *   defensible for the route as a whole.
+   *
+   * The trimming fractions matter: a route enters the first edge and leaves the last one part way,
+   * and charging the untravelled remainder would bill for road the driver never covers.
+   */
+  private priceTolls(
+    edges: readonly number[],
+    firstFraction: number,
+    endFrac: number,
+  ): { tollCost: number; tollConfidence: TollConfidence } {
+    const roads = this.obj.tollRoads;
+    if (roads === undefined || edges.length === 0) return { tollCost: 0, tollConfidence: 'verified' };
+    const byId = new Map(roads.map((r) => [r.id, r]));
+    const g = this.g;
+
+    let cost = 0;
+    let worst: TollConfidence = 'verified';
+    const seen = (c: TollConfidence): void => {
+      if (c === 'unpriced' || worst === 'unpriced') worst = 'unpriced';
+      else if (c === 'approximated') worst = 'approximated';
+    };
+
+    // One continuous run on one road. A route that leaves a tolled road and rejoins it pays twice,
+    // which is what a closed system actually does, so runs are priced separately and never summed
+    // into one journey.
+    let runRoad = 0;
+    let runMetres = 0;
+    let runMainlineGates = 0;
+    let runRampBooths = 0;
+    let metresSinceLastMainline = 0;
+    let runMinSegment = EPE_SEGMENT_NONE;
+    let runMaxSegment = EPE_SEGMENT_NONE;
+
+    const closeRun = (): void => {
+      const r = byId.get(runRoad);
+      runRoad = 0;
+      if (r === undefined) return;
+      const km = runMetres / 1000;
+
+      // CONFIDENCE IS A PROPERTY OF THE RUN, NOT OF AN EDGE, so it is decided here and not during
+      // the sweep. Whether a ramp was involved is not knowable until the run ends: a route that
+      // crosses a barrier only on its last edge is a mainline crossing throughout, and judging each
+      // edge as it passed would have marked the whole thing an estimate.
+      //
+      // CONFIDENCE TRACKS ROADS TRAVERSED, NOT ROADS CHARGED. A route can run 12 km on a
+      // barrier-charged expressway and pay nothing because it exits first. Recording confidence
+      // only where money changed hands would report that route as `verified` on the strength of
+      // having charged nothing, when what the reader needs to know is that it used a road whose
+      // tariff we do or do not stand behind.
+      const rampInvolved = r.mechanism === 'gate-hybrid' && (runRampBooths > 0 || runMainlineGates === 0);
+      seen(rampInvolved ? r.confidenceWithRamp : r.confidence);
+
+      if (r.mechanism === 'matrix') {
+        // ENTRY AND EXIT, NOT DISTANCE DRIVEN. Spans a..b mean the driver entered at plaza a and
+        // left at plaza b+1, so the billed distance is the published cell for that pair however
+        // far they actually drove. A run with no span at all is a ramp-only movement inside one
+        // interchange, which is entry and exit at the same plaza and costs nothing.
+        if (runMinSegment === EPE_SEGMENT_NONE) return;
+        const entry = runMinSegment;
+        const exit = runMaxSegment + 1;
+        const km2 = r.matrixKm?.[entry]?.[exit];
+        if (km2 === undefined) return;
+        const step = r.fareRoundingRupees ?? 1;
+        const charge = step * Math.round((r.ratePerKm * km2) / step);
+        cost += charge;
+        return;
+      }
+
+      if (r.mechanism === 'gate-hybrid') {
+        if (runMainlineGates > 0) {
+          // Each barrier crossed bills whole, plus the ramp rate on whatever was driven after the
+          // last one, which is the stretch a mainline fee does not cover.
+          const charge = runMainlineGates * r.feeRupees + (metresSinceLastMainline / 1000) * r.ratePerKm;
+          cost += charge;
+          return;
+        }
+        // No barrier crossed. Either the route used a ramp plaza, or it crossed no MAPPED booth at
+        // all, which our data allows because OSM holds five booths where the operator runs at least
+        // ten. Both bill by distance. Charging zero is the one error that actively steers a driver
+        // onto an unpriced toll road, so a run on this road is never free.
+        const charge = km * r.ratePerKm;
+        cost += charge;
+        return;
+      }
+
+      const charge = km * r.ratePerKm;
+      cost += charge;
+    };
+
+    const resetRun = (road: number): void => {
+      runRoad = road;
+      runMetres = 0;
+      runMainlineGates = 0;
+      runRampBooths = 0;
+      metresSinceLastMainline = 0;
+      runMinSegment = EPE_SEGMENT_NONE;
+      runMaxSegment = EPE_SEGMENT_NONE;
+    };
+
+    for (let i = 0; i < edges.length; i++) {
+      const e = edges[i] as number;
+      const road = g.edgeTollRoad[e] as number;
+      let m = g.edgeLengthM[e] as number;
+      if (i === 0) m -= firstFraction * m;
+      if (i === edges.length - 1) m -= (1 - endFrac) * m;
+
+      if (road !== runRoad) {
+        closeRun();
+        resetRun(road);
+      }
+      if (road === 0) continue;
+
+      runMetres += m;
+      const gate = g.edgeTollGate[e] as number;
+      // Accumulate FIRST, then decide, then reset. Order matters and getting it wrong is not
+      // visible in the result: resetting before accumulating made two consecutive barrier edges
+      // always measure zero apart, so any number of barriers collapsed into one however far apart
+      // they were. Caught by the multi-plaza control in `tests/engine/objective.test.ts`.
+      metresSinceLastMainline += m;
+      if (gate === TOLL_GATE_MAINLINE) {
+        // BOOTH NODES ARE NOT PLAZAS, and a flat fee is charged per PLAZA. One plaza is several
+        // booth nodes, one per lane and direction, and OSM places them along the carriageway rather
+        // than at a point: the Chhajju Nagar plaza is two nodes 0.4 km apart, both on the through
+        // carriageway, so a single crossing meets both. Counting nodes would bill that twice.
+        // Barriers on this network are tens of kilometres apart, so anything within a couple of
+        // kilometres of the last one is the same plaza.
+        if (runMainlineGates === 0 || metresSinceLastMainline > SAME_PLAZA_M) runMainlineGates++;
+        // Restart the measurement here. The part of this edge beyond the booth is not counted
+        // toward the post-barrier ramp charge, which is below the resolution of a booth whose
+        // position within its edge we do not know.
+        metresSinceLastMainline = 0;
+      } else if (gate === TOLL_GATE_RAMP) {
+        runRampBooths++;
+      }
+      const seg = g.edgeTollSegment[e] as number;
+      if (seg !== EPE_SEGMENT_NONE) {
+        if (runMinSegment === EPE_SEGMENT_NONE || seg < runMinSegment) runMinSegment = seg;
+        if (runMaxSegment === EPE_SEGMENT_NONE || seg > runMaxSegment) runMaxSegment = seg;
+      }
+    }
+    closeRun();
+    return { tollCost: cost, tollConfidence: worst };
   }
 
   /**

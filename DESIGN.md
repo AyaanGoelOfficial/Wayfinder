@@ -377,7 +377,167 @@ It leaves **0 of 56 pairs unrouted**, so the mode never strands a destination.
 
 ---
 
+## The toll model: two mechanisms, a statutory source, and one named pattern. Rebuilt at gate 6.
+
+Supersedes the gate 4 and gate 5 toll sections below, which are kept because the reasoning that got
+us here is what stops it being redone. Read this one first.
+
+### The search proxy and the billed truth
+
+**One pattern, stated once, covering every toll road here.** Each road has two prices: a smooth
+per-kilometre `searchRatePerKm` the SEARCH pays, and an exact `mechanism` that `priceTolls` applies
+once over the chosen path to produce the reported `tollCost`.
+
+**This is forced, not a convenience.** A shortest path can only minimise a cost that is additive
+over edges, and neither real mechanism is. A barrier fee is a step function of position; a closed
+system's fare is a function of the whole run. The alternative was tried and measured: putting the
+140 rupee Jewar barrier on the single edge containing the plaza IS additive, and it landed as a
+**37 minute penalty on one 604 m edge**. The router did the rational thing and left the expressway
+at an interchange to rejoin past the barrier, crossing 22.0 km of a tolled road for nothing. The
+cost model was correct edge by edge and wrong as a route.
+
+So the search sees a smooth rate close to each road's real average, and the exact rule runs once on
+a known path where the whole run is visible. The two agree closely and are never required to agree
+exactly. `seconds` therefore still equals the sum of its parts, which is what keeps the equality
+gate's cost-against-path validator meaningful.
+
+**The dodge is closed independently of the proxy**, and both fixes were needed. Every booth is now a
+toll point, `edgeTollGate` distinguishing a mainline barrier from a ramp booth, so leaving the
+carriageway to avoid a plaza now meets a ramp charge exactly as it does in reality.
+
+### Eastern Peripheral: statutory distances, a fitted rate
+
+**Gazette of India S.O. 613(E), 3 February 2025**, MoRTH, Part II Section 3(ii), amending S.O.
+4153(E) of 5 September 2022. It gives all eleven plazas with chainages and, in Table 5, the tollable
+distance between every pair. This outranks every other source this project holds.
+
+**Table 5, not Table 2.** Table 2 is carriageway only; Table 5 is "the net effective length for
+which fee shall be due and payable", carriageway plus the equivalent length of structures over 60 m,
+and it is the one fees are declared payable on. They differ by 23.4 km end to end, about 45 rupees.
+
+**The transcription is checked by an identity, not by re-reading it.** Structures sit on fixed spans,
+so the ten adjacent-plaza allowances (Table 5 minus Table 2) must sum to the end-to-end allowance:
+**23.434 against 23.433 km**, across 21 separately transcribed cells. A single wrong digit breaks it.
+`tests/engine/objective.test.ts` asserts it permanently. Two cells are non-monotonic in chainage
+separation and both are real: the main plazas bill to the section ends at km 1.000 and km 136.000,
+and the Badagaon to Duhai span alone carries 3.020 km of structures.
+
+**The rate is fitted, because Table 1 is not in the excerpt we hold.** For each cell of a rate board
+the rate consistent with the posted fare is a half-open interval; a rate is admissible only if it
+lies in all ten:
+
+```
+Pelak/Sihol board, current      admissible [1.9457, 1.9526)   1.95 lies inside   10 of 10 cells
+Fatehpur Rampur board, 2025     admissible [1.8728, 1.8995)   1.89 lies inside   10 of 10 cells
+```
+
+The bands do not overlap, 3.3% apart, which is what proves two annual revisions rather than noise.
+The shared Sihol to Fatehpur Rampur cell reads 95 rupees on both boards because both rates round to
+it. **We bill from 1.95.** Recorded because it is the kind of near-miss that gets rounded into
+"verified": **1.90 fits only 9 of 10**, the Mawikalan cell computing 142.54 and rounding to 145
+against a posted 140.
+
+### Chainage, not names: how an entry-exit pair is resolved
+
+The fare needs to know which plaza a route entered and left at. OSM names three of eleven plazas,
+and the villages it does carry sit up to 18 km off the road, so **position is measured and identity
+is never inferred from a nearby name.** `npm run calibrate:epe` chains the mainline carriageway,
+measures each interchange's distance from the southern end, and fits ONE unknown, the chainage of
+that end, against the eleven published chainages.
+
+| Feature | Residual |
+|---|---|
+| Pelak/Sihol | -0.177 km |
+| Maujpur | -0.326 km |
+| Fatehpur Rampur | -0.072 km |
+| Bilakbarpur | +0.027 km |
+| Main Plaza Chhajju Nagar | +0.547 km |
+
+**The three plazas the earlier audit identified by hand were HELD OUT of the fit and used as its
+test. All three are reproduced from position alone.** That includes the site at exit 10 the audit
+had refused to name, which is **Fatehpur Rampur**: the Gazette places it in GB Nagar at km 83.005,
+10.131 km from Bilakbarpur, matching the measured gap. The refusal was correct; the evidence simply
+was not in OSM. The notification also settles the spelling: *Bil Akbarpur or Beel Akbarpur has the
+same meaning.*
+
+**Main plazas are not interchanges, and conflating them broke the first fit.** Nine of the eleven are
+ramp plazas at interchanges; Jakhauli and Chhajju Nagar are barriers across the open carriageway.
+Matching the Palwal terminus tie-in against Chhajju Nagar pulled the anchor 2.5 km and made one
+anchor unable to explain the road. Matching each kind to its own feature removed it.
+
+**A drifting residual is a refusal, not an average.** The script exits non-zero rather than adopting
+a mapping it cannot justify.
+
+`edgeTollSegment` stores the resulting inter-plaza span per edge, so a route occupying spans a..b
+entered at plaza a and left at plaza b+1. That is the Table 5 lookup, and it means the engine prices
+a closed system without knowing what a plaza is.
+
+### Yamuna Expressway: hybrid, and why it is not statutory
+
+Mainline barriers charge a flat fee; ramp plazas charge by distance; a run crossing no mapped booth
+is charged by distance too, because OSM holds five booths where the operator runs at least ten and a
+free ride on a toll road is the one error that actively steers drivers onto it.
+
+**No statutory source is obtainable online.** UP publishes no online state gazette, only physical
+publication via the Directorate of Printing and Stationery, Lucknow. An RTI to YEIDA is the open
+path and would be one config edit if it lands.
+
+### Confidence, and where it now shows a number
+
+`verified` shows the rupees bare. `approximated` and `unpriced` show them behind an estimate label.
+**The line moved at gate 6**: `approximated` used to show no figure at all. Once every road had a
+defensible per-kilometre basis, withholding the number stopped protecting the reader and started
+leaving them with less than we know. What must never happen is a hedged figure and a certain one
+looking identical, so `Route.tollDisplay` is derived server-side by one shared function and the view
+obeys it rather than deciding.
+
+Measured over the 56 pairs: **15 verified, 6 approximated, 0 unpriced.** Before the ramp-attribution
+fix it was 6 verified, 0 approximated, 12 unpriced, because 8.38 km of unnamed slip road dragged
+every EPE route down. A road's own ramps are not a different road.
+
+### The cost of an hour of driving: 225 to 550 rupees
+
+`DRIVING_COST_RUPEES_PER_HOUR`, renamed from `VALUE_OF_TIME_RUPEES_PER_HOUR` because the old name
+was the error. The constant decides how much detour is worth avoiding a fee, so it must carry
+everything an extra hour of driving costs: fuel alone is over 300 rupees an hour at these speeds,
+before wear, fatigue, and an hour of village road instead of expressway. 225 implied an hour was
+worth less than a coffee.
+
+**Measured A/B over the 56 pairs, same graph, same process:**
+
+| | 225/hour | 550/hour |
+|---|---|---|
+| Routes changed | | 11 of 56 |
+| Tolled km | 446.5 | 608.3 (+36.2%) |
+| Total distance | 2605.3 km | 2666.6 km (+2.36%) |
+| Total drive time | 3036.8 min | 2990.1 min (-1.54%) |
+| Total billed tolls | Rs 1196 | Rs 1637 |
+
+The direction is the intended one: every rupee buys less detour, so toll roads become relatively
+more attractive. We now buy 2.36% more distance for 1.54% less driving.
+
+### Deferred, with revisit conditions
+
+- **NE3 collects only for exit from EPE**, stated in the notification, so the true fare matrix is
+  asymmetric at that one plaza. Unmodelled. Revisit when a route actually uses NE3; none of the 56
+  pairs reaches it, and it lies outside the clip's EPE mainline.
+- **Table 1 base rates** are not in our excerpt, which begins at page 4. The rate is fitted rather
+  than read. Revisit if the full notification is obtained.
+- **Yamuna ramp fees.** One ramp board was photographed showing a flat 50 rupees for a car. One
+  board is not a tariff: it does not establish whether every ramp charges the same, nor whether a
+  ramp charge stacks with a mainline crossing. Revisit on a second board or an RTI response.
+- **Exit refs are the correct interchange key if the matrix is ever keyed by identity rather than by
+  span.** OSM carries exit numbers for six interchanges in our clip (6, 7, 8, 10, 15, 16) and booths
+  for only three sites, so booth nodes are the weaker key. Not needed under the current model, which
+  keys on measured chainage.
+
+---
+
 ## The toll price: derived from the tariff. Rebuilt at gate 4, after the first one was a placeholder.
+
+> **SUPERSEDED at gate 6** by the section above. The uniform 2.65 rupees/km recorded here was never
+> the billing mechanism for either road that carries our tolled network. Kept for its provenance and
+> for the reasoning that exposed the error.
 
 **The first toll number was never derived, and it was covering for the distance term.** It was 12
 s/km, justified only as "half of `secondsPerKm`, so the two move together". That tie was tidy and

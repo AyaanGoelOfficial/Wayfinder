@@ -23,6 +23,18 @@ which is what lets the whole ladder be tested against hand-built toy graphs.
   weight the charge depends on WHICH classes the route used, not only how far it went, and deriving
   it from the total would report a number the search never charged. A weight of 1.0 everywhere, or
   an absent `qualityByRank`, restores the flat behaviour the toy graphs assume.
+- **THE SEARCH PAYS A PROXY, THE REPORT PAYS THE TRUTH, and they are different numbers by
+  design.** Every toll road contributes a smooth `searchRatePerKm` to the edge cost, because a
+  shortest path can only minimise an additive cost and no real toll mechanism is additive. The
+  billed figure is computed once, over the chosen path, by that road's exact mechanism. Do not
+  "fix" the disagreement by putting the exact mechanism back into the edge cost: it was tried, and
+  a 140 rupee barrier on one 604 m edge became a 37 minute penalty that the router answered by
+  leaving the expressway and rejoining past the plaza. `DESIGN.md` states the pattern once.
+- **`tollConfidence` is decided per continuous RUN, never per edge.** Whether a ramp was involved
+  is a property of the whole run: a route crossing a barrier only on its last edge is a mainline
+  crossing throughout, and judging each edge as it passed marked the whole thing an estimate.
+  It also tracks roads TRAVERSED, not roads charged, or a route that exits before the plaza reports
+  `verified` on the strength of having paid nothing.
 - **`avoidTolls` is a HARD filter, never a large penalty.** "Avoid tolls" means the route must not
   use one; pricing tolls very high instead still returns a tolled route when no free one exists,
   which is the opposite of what the caller asked. Returning no route is the correct answer.

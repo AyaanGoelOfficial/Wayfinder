@@ -38,7 +38,7 @@
  */
 import { writeFile, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { BUILD_AREA, OBJECTIVE, SNAP_DESTINATION_M, TURN_COST } from '../config/city.ts';
+import { BUILD_AREA, OBJECTIVE, SNAP_DESTINATION_M, TURN_COST, TOLL_ROADS } from '../config/city.ts';
 import { ROUTING_FIXTURES } from '../config/fixtures/routing.ts';
 import { SnapIndex } from '../packages/engine/snap.ts';
 import { Router } from '../packages/engine/dijkstra.ts';
@@ -48,6 +48,8 @@ import type { ClippedWay } from '../packages/pipeline/clip/clip.ts';
 import { classifyWay } from '../packages/pipeline/graph/profile.ts';
 import { haversineM } from '../packages/shared/geo.ts';
 import { readLock } from './fetch-extracts.ts';
+
+const UNPRICED_RATE_PER_KM = (TOLL_ROADS.find((t) => t.key === 'unpriced')?.ratePerKm ?? 0);
 
 const DATA = resolve(import.meta.dirname, '../data');
 const OSRM = 'https://router.project-osrm.org';
@@ -338,7 +340,10 @@ function fullCost(p: Priced): number {
   return (
     p.seconds +
     (p.metres / 1000) * OBJECTIVE.secondsPerKm +
-    (p.tollM / 1000) * OBJECTIVE.tollReluctanceSecondsPerKm
+    // Priced at the `unpriced` stand-in rate. This estimator does not know WHICH toll road the
+    // metres were on, so it cannot apply a gate fee or a floor; it is a rough comparison figure,
+    // not the router's cost. The router's own `tollSeconds` is exact.
+    (p.tollM / 1000) * UNPRICED_RATE_PER_KM * OBJECTIVE.secondsPerRupee
   );
 }
 

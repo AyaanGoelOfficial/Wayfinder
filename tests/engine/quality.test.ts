@@ -182,7 +182,7 @@ function edgeOf(
   throw new Error(`no edge on way ${wayId} from ${fromNode} to ${toNode}`);
 }
 
-const NO_PREF: ObjectiveConfig = { secondsPerKm: 0, tollReluctanceSecondsPerKm: 0, avoidTollsByDefault: false };
+const NO_PREF: ObjectiveConfig = { secondsPerKm: 0, secondsPerRupee: 0, avoidTollsByDefault: false };
 
 const APPROACH = 10;
 const EXIT = 20;

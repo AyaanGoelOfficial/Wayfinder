@@ -20,7 +20,8 @@
  *   pad         to an 8-byte boundary
  *   f64 block   vertexLat, vertexLon, vertexNodeId, edgeLengthM, edgeWayId
  *   i32 block   csrOffset, csrEdge, edgeFrom, edgeTo, edgeShape, shapeOffset, shapeLat, shapeLon
- *   u8  block   edgeSpeedKmh, edgeReversed, edgePrivate, edgeRestricted, edgeClassRank, edgeToll
+ *   u8  block   edgeSpeedKmh, edgeReversed, edgePrivate, edgeRestricted, edgeClassRank, edgeToll,
+ *               edgeTollRoad, edgeTollGate, edgeTollSegment
  *
  * VERSIONING. Any change to the section list, the order, or an element type is a version bump.
  * The loader refuses a mismatch and names the command that rebuilds it, because a silently
@@ -42,14 +43,44 @@ export const GRAPH_MAGIC = 0x5747_4e31;
  * graph; what a toll is worth is a preference and lives in `config/city.ts`. Keeping the two apart
  * is what lets the same artifact serve both "tolls allowed but priced" and "avoid tolls entirely"
  * without a rebuild.
+ *
+ * v4 replaced the single toll FLAG with the two facts a priced model needs, and left the flag in
+ * place because `avoidTolls` is a hard filter that only needs to know "any toll at all".
+ * `edgeTollRoad` is the id of the entry in `TOLL_ROADS` that charges this edge, 0 for none, so the
+ * artifact records WHICH road charges rather than assuming one rate for all of them.
+ * `edgeTollGate` is 1 when the edge contains a mainline toll plaza node, which is what a
+ * gate-charged road bills on. Neither carries an AMOUNT: prices, mechanisms and confidence live in
+ * `config/city.ts`, so a tariff revision never requires a graph rebuild.
+ *
+ * v5 added `edgeTollSegment` and widened the meaning of `edgeTollGate` from a flag to a kind.
+ * `edgeTollGate` is now 0 none, 1 mainline barrier, 2 ramp booth: marking only mainline barriers
+ * left the router free to leave a gate-charged expressway and rejoin past the plaza for nothing,
+ * which it did. `edgeTollSegment` is the inter-plaza span an edge lies in, 255 when not applicable,
+ * and it is what lets a CLOSED entry-exit system be priced from its published fare matrix: a route
+ * occupying spans a..b entered at plaza a and left at plaza b+1. Both are positions and kinds, not
+ * amounts, so the rule that a tariff revision never rebuilds the graph still holds.
  */
-export const GRAPH_FORMAT_VERSION = 3;
+export const GRAPH_FORMAT_VERSION = 5;
 
 /** Byte length of the fixed header: magic, version, 6 counts, 2 JSON lengths, all u32. */
 export const GRAPH_HEADER_BYTES = 4 * 10;
 
 /** Per-edge u8 arrays, in write order. The count is what sizes the u8 block. */
-export const U8_SECTIONS_PER_EDGE = 6;
+export const U8_SECTIONS_PER_EDGE = 9;
+
+/**
+ * Values of `edgeTollGate`. Here rather than in the pipeline because the writer and the reader are
+ * in packages that may not import each other, and two enums agreeing by comment is exactly the
+ * failure this file exists to prevent.
+ */
+export const TOLL_GATE_NONE = 0;
+/** A barrier across the through carriageway. Bills a flat fee per crossing. */
+export const TOLL_GATE_MAINLINE = 1;
+/** An interchange ramp booth. Bills by distance, and its existence is what closes the barrier dodge. */
+export const TOLL_GATE_RAMP = 2;
+
+/** `edgeTollSegment` where the edge is not on a closed-system road, or has no chainage. */
+export const EPE_SEGMENT_NONE = 255;
 
 export interface GraphFileCounts {
   readonly vertexCount: number;

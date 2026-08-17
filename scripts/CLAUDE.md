@@ -1,5 +1,37 @@
 # scripts — one-shot operator commands, not library code
 
+## The catalogue
+
+Moved here from the root `CLAUDE.md` when that file hit the 250-line cap. Every entry is a
+script in this folder, so this file is already loaded whenever one is touched.
+
+```bash
+npm run validate         # 6 landmark + 50 random pairs vs OSRM. Median <3%, p95 <7%
+npm run diagnose:route   # WHY a pair diverges, grouped by cause -> DIVERGENCE.md. Add --all
+npm run calibrate:speeds # tagged maxspeed per class vs our defaults. Read the sample counts
+npm run calibrate:quality # surface/smoothness/lanes coverage per class. Controls printed first
+npm run calibrate:epe    # fits EPE chainage to the Gazette plazas. REFUSES on a drifting residual
+npm run diagnose:flattening # class ratio, slow-road share, and the straight-line-excess proof
+npm run experiment:speeds # A/B a speed table over the same 56 pairs. No rebuild needed
+npm run experiment:turns  # A/B the turn cost model. Reports SHAPE overlap, not just the delta
+npm run experiment:objective # distance and toll preferences. Route sanity BEFORE divergence
+npm run audit:tolls      # every tolled way by name/ref with km. Read-only
+npm run audit:epe        # EPE booths, junctions, and which pairs use the road. Read-only
+npm run report:tolls     # what the toll model charges, per road and per pair, with the cost A/B
+npm run bench            # p50/p95/p99 for route, snap, search -> BENCHMARKS.md
+npm run verify:browser   # NOT BUILT until gate 8. Console, visual, network, GPS, throttled
+npm run acceptance       # NOT BUILT until gate 9. One pass/fail table, every charter item
+```
+
+- **An audit or a report script CHANGES NOTHING and says so in its own output.** `audit:tolls`,
+  `audit:epe` and `report:tolls` end by printing that no constant and no model was changed.
+  A measurement command that quietly writes a constant is how a fitted number enters the repo
+  without anyone deciding to put it there.
+- **`calibrate:epe` exits non-zero rather than adopting a mapping it cannot justify.** It fits one
+  unknown against eleven published chainages and holds out three independently identified plazas as
+  its test. A drifting residual means our carriageway is not the Gazette reference line, and the
+  answer to that is a refusal, not an average.
+
 Everything here is invoked by an `npm run` script and is allowed to touch the network, the
 filesystem, and `tools/`. Nothing in `packages/` may import from here.
 

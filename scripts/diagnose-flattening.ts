@@ -49,8 +49,11 @@ const RANDOM_PAIRS = 50;
 /** One representative class per `CLASS_RANK`, biggest road first. Index IS the rank. */
 const BY_RANK = ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'service'];
 
-const FLAT: ObjectiveConfig = { secondsPerKm: 24, tollReluctanceSecondsPerKm: 12, avoidTollsByDefault: false };
-const TIME_ONLY: ObjectiveConfig = { secondsPerKm: 0, tollReluctanceSecondsPerKm: 0, avoidTollsByDefault: false };
+// No toll term in either candidate: this diagnostic is about the DISTANCE term and the class
+// hierarchy, and a toll charge on one corridor would move the class shares for a reason that has
+// nothing to do with flattening.
+const FLAT: ObjectiveConfig = { secondsPerKm: 24, secondsPerRupee: 0, avoidTollsByDefault: false };
+const TIME_ONLY: ObjectiveConfig = { secondsPerKm: 0, secondsPerRupee: 0, avoidTollsByDefault: false };
 
 const CANDIDATES: readonly { name: string; cfg: ObjectiveConfig }[] = [
   { name: 'time only', cfg: TIME_ONLY },

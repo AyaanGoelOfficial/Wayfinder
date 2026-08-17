@@ -29,6 +29,9 @@ export interface LoadedArtifact {
     readonly edgePrivate: Uint8Array;
     readonly edgeClassRank: Uint8Array;
     readonly edgeToll: Uint8Array;
+    readonly edgeTollRoad: Uint8Array;
+    readonly edgeTollGate: Uint8Array;
+    readonly edgeTollSegment: Uint8Array;
   };
   readonly restrictions: Restrictions & {
     readonly banned: ReadonlyMap<number, ReadonlySet<number>>;
@@ -117,6 +120,9 @@ export function parseGraphArtifact(bytes: Uint8Array): LoadedArtifact {
   const edgeRestricted = new Uint8Array(bytes.buffer, u8Start + E * 3, E);
   const edgeClassRank = new Uint8Array(bytes.buffer, u8Start + E * 4, E);
   const edgeToll = new Uint8Array(bytes.buffer, u8Start + E * 5, E);
+  const edgeTollRoad = new Uint8Array(bytes.buffer, u8Start + E * 6, E);
+  const edgeTollGate = new Uint8Array(bytes.buffer, u8Start + E * 7, E);
+  const edgeTollSegment = new Uint8Array(bytes.buffer, u8Start + E * 8, E);
 
   const banned = new Map<number, ReadonlySet<number>>();
   for (const [via, tos] of turns.banned) banned.set(via, new Set(tos));
@@ -128,7 +134,7 @@ export function parseGraphArtifact(bytes: Uint8Array): LoadedArtifact {
       vertexLat, vertexLon, vertexNodeId,
       csrOffset, csrEdge,
       edgeFrom, edgeTo, edgeLengthM, edgeSpeedKmh, edgeWayId, edgeShape, edgeReversed, edgePrivate,
-      edgeClassRank, edgeToll,
+      edgeClassRank, edgeToll, edgeTollRoad, edgeTollGate, edgeTollSegment,
       shapeOffset, shapeLat, shapeLon,
     },
     restrictions: { banned, bannedSequences, edgeRestricted },

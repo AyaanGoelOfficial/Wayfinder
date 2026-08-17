@@ -12,7 +12,10 @@
  * the stack, and it does so on the largest component, which is exactly the input that matters.
  */
 import { haversineM } from '../../shared/geo.ts';
-import { classifyWay } from './profile.ts';
+import { attributeTollRamps, classifyWay, tollGateKindOf, tollRoadOf } from './profile.ts';
+import { computeEpeChainage, epeSegmentOf } from './epe.ts';
+import { EPE_SEGMENT_NONE } from '../../shared/graphfile.ts';
+import { TOLL_ROADS } from '../../../config/city.ts';
 import type { Clipped } from '../clip/clip.ts';
 
 const COORD_SCALE = 1e7;
@@ -69,6 +72,26 @@ export interface Graph {
   readonly edgeClassRank: Uint8Array;
   /** 1 when the underlying way charges a toll. Priced by the objective, never by the graph. */
   readonly edgeToll: Uint8Array;
+  /**
+   * WHICH toll road charges this edge, as an id into `TOLL_ROADS`, 0 for none. The graph records
+   * which road, never how much: mechanisms, rates and confidence live in `config/city.ts`.
+   */
+  readonly edgeTollRoad: Uint8Array;
+  /**
+   * What kind of toll point this edge CONTAINS: 0 none, 1 a mainline barrier, 2 a ramp booth.
+   * See `tollGateKindOf`. Both kinds are marked, and they bill differently.
+   */
+  readonly edgeTollGate: Uint8Array;
+
+  /**
+   * For a closed-system road, which inter-plaza span this edge lies in; 255 when not applicable.
+   *
+   * `s` means "between plaza s and plaza s+1" in `EPE_PLAZAS` order. A route occupying spans a..b
+   * entered at plaza a and left at plaza b+1, which is the pair the fare matrix is indexed by. This
+   * is what lets an entry-exit fare be priced from the graph without the engine knowing what a
+   * plaza is.
+   */
+  readonly edgeTollSegment: Uint8Array;
 
   /** Packed shape points, scaled by 1e7. Shape s spans shapeOffset[s]..shapeOffset[s+1]. */
   readonly shapeOffset: Int32Array;
@@ -111,6 +134,9 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
     readonly speedKmh: number;
     readonly classRank: number;
     readonly toll: boolean;
+    /** Filled by the toll attribution pass below, once every named road's nodes are known. */
+    tollRoad: number;
+    readonly highway: string;
     readonly forward: boolean;
     readonly backward: boolean;
     readonly isPrivate: boolean;
@@ -168,6 +194,8 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
       speedKmh: Math.max(1, Math.min(255, Math.round(cls.speedKmh))),
       classRank: cls.classRank,
       toll: cls.toll,
+      tollRoad: 0, // resolved after this pass, once every named toll road's nodes are known
+      highway: way.tags.get('highway') ?? '',
       forward: cls.forward,
       backward: cls.backward,
       isPrivate: cls.access === 'private',
@@ -187,6 +215,45 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
   }
   sampleRss();
   log(`  classified ${clipped.ways.length.toLocaleString('en-US')} ways, ${kept.length.toLocaleString('en-US')} drivable`);
+
+  // ---- Toll attribution: which road charges each way, ramps resolved by geometry ----
+  //
+  // Two steps, and the order matters. Names first, so every named toll road's node set is complete;
+  // then geometry, so an unnamed ramp can be recognised as belonging to the road it joins. Doing it
+  // the other way round would let a ramp claim a road that had not been seen yet.
+  const unpricedId = TOLL_ROADS.find((r) => r.key === 'unpriced')?.id ?? 0;
+  const byName = new Map<number, number>();
+  for (const k of kept) {
+    const way = clipped.ways[k.wayIndex] as (typeof clipped.ways)[number];
+    byName.set(way.id, tollRoadOf(way.id, way.tags));
+  }
+  const ramps = attributeTollRamps(clipped.ways, byName, unpricedId);
+  let tolledWays = 0;
+  for (const k of kept) {
+    const way = clipped.ways[k.wayIndex] as (typeof clipped.ways)[number];
+    k.tollRoad = ramps.reassigned.get(way.id) ?? byName.get(way.id) ?? 0;
+    if (k.tollRoad !== 0) tolledWays++;
+  }
+  {
+    const per = new Map<number, number>();
+    for (const [, road] of ramps.reassigned) per.set(road, (per.get(road) ?? 0) + 1);
+    const summary = [...per]
+      .map(([road, n]) => `${TOLL_ROADS.find((r) => r.id === road)?.key ?? road} ${n}`)
+      .join(', ');
+    const stillUnpriced = kept.filter((k) => k.tollRoad === unpricedId).length;
+    log(
+      `  toll ways: ${tolledWays.toLocaleString('en-US')}; ${ramps.reassigned.size} unnamed ramp way(s) ` +
+        `attached by geometry in ${ramps.rounds} round(s)${summary === '' ? '' : ` (${summary})`}; ` +
+        `${stillUnpriced} way(s) remain unpriced`,
+    );
+  }
+
+  // ---- EPE chainage, so a closed-system fare can be looked up by entry and exit plaza ----
+  const epe = computeEpeChainage(clipped);
+  log(
+    `  EPE mainline: ${epe.runKm.length} carriageway(s), longest ${(epe.runKm[0] ?? 0).toFixed(3)} km, ` +
+      `${epe.chainageKmOf.size} node(s) with chainage${epe.usable ? '' : ' (TOO SHORT, spans not assigned)'}`,
+  );
 
   for (let i = 0; i < nodeCount; i++) {
     if ((useCount[i] as number) >= 2) isVertex[i] = 1;
@@ -212,6 +279,9 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
   const edgePrivate: number[] = [];
   const edgeClassRank: number[] = [];
   const edgeToll: number[] = [];
+  const edgeTollRoad: number[] = [];
+  const edgeTollGate: number[] = [];
+  const edgeTollSegment: number[] = [];
 
   const shapeOffset: number[] = [0];
   const shapeLat: number[] = [];
@@ -257,6 +327,29 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
 
       if (a !== b && len > 0) {
         totalLengthM += len;
+        // Does this segment contain a mainline toll plaza? Checked over the node range the
+        // segment actually covers, endpoints included, because a plaza sits at a point on the way
+        // and the edge covering that point is the one a crossing must traverse.
+        let gate = 0;
+        if (k.tollRoad !== 0) {
+          for (let q = segStart; q <= p; q++) {
+            const ni = k.idx[q] as number;
+            const kind = tollGateKindOf(clipped.nodeTags.get(nodeIds[ni] as number), k.highway);
+            // A mainline barrier outranks a ramp booth on the same edge: it is the larger charge
+            // and the one whose flat fee must not be replaced by a per-km one.
+            if (kind > gate) gate = kind;
+          }
+        }
+
+        // Which inter-plaza span does this edge lie in, for a closed-system fare? Taken at the
+        // segment MIDPOINT rather than an endpoint, so an edge that straddles a plaza cannot be
+        // attributed to the wrong side of it by an arbitrary choice of end.
+        let segment = EPE_SEGMENT_NONE;
+        if (k.tollRoad !== 0 && epe.usable) {
+          const aKm = epe.chainageKmOf.get(nodeIds[k.idx[segStart] as number] as number);
+          const bKm = epe.chainageKmOf.get(nodeIds[nodeI] as number);
+          if (aKm !== undefined && bKm !== undefined) segment = epeSegmentOf((aKm + bKm) / 2);
+        }
         if (k.forward) {
           edgeFrom.push(a); edgeTo.push(b); edgeLengthM.push(len);
           edgeSpeedKmh.push(k.speedKmh); edgeWayId.push(way.id);
@@ -264,6 +357,9 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
           edgePrivate.push(k.isPrivate ? 1 : 0);
           edgeClassRank.push(k.classRank);
           edgeToll.push(k.toll ? 1 : 0);
+          edgeTollRoad.push(k.tollRoad);
+          edgeTollGate.push(gate);
+          edgeTollSegment.push(segment);
         }
         if (k.backward) {
           edgeFrom.push(b); edgeTo.push(a); edgeLengthM.push(len);
@@ -272,6 +368,9 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
           edgePrivate.push(k.isPrivate ? 1 : 0);
           edgeClassRank.push(k.classRank);
           edgeToll.push(k.toll ? 1 : 0);
+          edgeTollRoad.push(k.tollRoad);
+          edgeTollGate.push(gate);
+          edgeTollSegment.push(segment);
         }
         if (k.forward !== k.backward) onewayEdges++;
       }
@@ -340,6 +439,9 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
   const fPriv: number[] = [];
   const fRank: number[] = [];
   const fToll: number[] = [];
+  const fTollRoad: number[] = [];
+  const fTollGate: number[] = [];
+  const fTollSegment: number[] = [];
   let keptLengthM = 0;
   for (let e = 0; e < edgeFrom.length; e++) {
     const a = newVertexOf[edgeFrom[e] as number] as number;
@@ -354,6 +456,9 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
     fPriv.push(edgePrivate[e] as number);
     fRank.push(edgeClassRank[e] as number);
     fToll.push(edgeToll[e] as number);
+    fTollRoad.push(edgeTollRoad[e] as number);
+    fTollGate.push(edgeTollGate[e] as number);
+    fTollSegment.push(edgeTollSegment[e] as number);
     keptLengthM += edgeLengthM[e] as number;
   }
 
@@ -409,6 +514,9 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
     edgePrivate: new Uint8Array(fPriv),
     edgeClassRank: new Uint8Array(fRank),
     edgeToll: new Uint8Array(fToll),
+    edgeTollRoad: new Uint8Array(fTollRoad),
+    edgeTollGate: new Uint8Array(fTollGate),
+    edgeTollSegment: new Uint8Array(fTollSegment),
     shapeOffset: new Int32Array(shapeOffset),
     shapeLat: new Int32Array(shapeLat),
     shapeLon: new Int32Array(shapeLon),

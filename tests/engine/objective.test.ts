@@ -20,9 +20,17 @@ import { buildGraph } from '../../packages/pipeline/graph/build.ts';
 import { buildTurnTable } from '../../packages/pipeline/graph/restrictions.ts';
 import { Router } from '../../packages/engine/dijkstra.ts';
 import { IdMap } from '../../packages/pipeline/clip/idset.ts';
-import { OBJECTIVE } from '../../config/city.ts';
+import {
+  EPE_CARRIAGEWAY_KM,
+  EPE_PLAZAS,
+  EPE_TOLLABLE_KM,
+  OBJECTIVE,
+  TOLL_ROADS,
+  TOLL_TAGGING_ERRORS,
+} from '../../config/city.ts';
+import { tollDisplayOf } from '../../packages/shared/toll.ts';
 import { CLASS_RANK } from '../../packages/pipeline/graph/profile.ts';
-import type { ObjectiveConfig } from '../../packages/shared/index.ts';
+import type { ObjectiveConfig, TollRoad } from '../../packages/shared/index.ts';
 import type { Clipped, ClipStats, ClippedWay } from '../../packages/pipeline/clip/clip.ts';
 
 const SCALE = 1e7;
@@ -36,7 +44,10 @@ const EMPTY_STATS: ClipStats = {
   pass1Seconds: 0, pass2Seconds: 0, writeSeconds: 0, peakRssBytes: 0, cacheBytes: 0,
 };
 
-interface N { id: number; lat: number; lon: number }
+// `| undefined` explicitly, because `exactOptionalPropertyTypes` is on repo-wide: an optional
+// property may be ABSENT but may not be set to undefined unless its type says so, and the toy
+// builders below pass undefined to mean "no booth here".
+interface N { id: number; lat: number; lon: number; tags?: Record<string, string> | undefined }
 interface W { id: number; refs: number[]; tags: Record<string, string> }
 
 function build(nodes: readonly N[], ways: readonly W[]) {
@@ -51,8 +62,14 @@ function build(nodes: readonly N[], ways: readonly W[]) {
     nodeLon[i] = Math.round(nd.lon * SCALE);
   });
   const built: ClippedWay[] = ways.map((w) => ({ id: w.id, refs: w.refs, tags: new Map(Object.entries(w.tags)) }));
+  // Node tags carry `barrier=toll_booth`, which is the only way a toy graph can exercise a barrier
+  // charge at all. Empty for every test that does not need one, which is how this read before.
+  const nodeTags = new Map<number, Map<string, string>>();
+  for (const nd of nodes) {
+    if (nd.tags !== undefined) nodeTags.set(nd.id, new Map(Object.entries(nd.tags)));
+  }
   const clipped: Clipped = {
-    nodeIds, nodeLat, nodeLon, nodeTags: new Map(), ways: built, relations: [], stats: EMPTY_STATS, nodeIndex,
+    nodeIds, nodeLat, nodeLon, nodeTags, ways: built, relations: [], stats: EMPTY_STATS, nodeIndex,
   };
   const graph = buildGraph(clipped);
   const vertexOfNodeId = new Map<number, number>();
@@ -77,7 +94,7 @@ function edgeOf(
   throw new Error(`no edge on way ${wayId} from ${fromNode} to ${toNode}`);
 }
 
-const NO_PREF: ObjectiveConfig = { secondsPerKm: 0, tollReluctanceSecondsPerKm: 0, avoidTollsByDefault: false };
+const NO_PREF: ObjectiveConfig = { secondsPerKm: 0, secondsPerRupee: 0, avoidTollsByDefault: false };
 
 /**
  * Two ways between the same pair of vertices, with an approach stub and an exit stub.
@@ -200,13 +217,17 @@ describe('tolls', () => {
   it('prices a tolled road by default rather than banning it', () => {
     const { graph, turns, vertexOfNodeId } = nearTie(true);
     const start = edgeOf(graph, vertexOfNodeId, DETOUR, 1, 2);
-    const r = new Router(graph, turns, undefined, { ...NO_PREF, tollReluctanceSecondsPerKm: 12 });
+    const r = new Router(graph, turns, undefined, { ...NO_PREF, secondsPerRupee: 16, tollRoads: TOLL_ROADS });
     const res = r.route(start, 0, start, 1);
     expect(res).not.toBeNull();
     const x = res as NonNullable<typeof res>;
     // The tolled road is still usable, and the reluctance is charged and reported.
     expect(x.tollMetres).toBeGreaterThan(0);
-    expect(x.tollSeconds).toBeCloseTo((x.tollMetres / 1000) * 12, 6);
+    // The toy way is tagged `toll=yes` with no name, so it falls to the `unpriced` entry, which is
+    // the point: a road we cannot price is charged, never quietly freed.
+    const unpriced = TOLL_ROADS.find((t) => t.key === 'unpriced') as (typeof TOLL_ROADS)[number];
+    expect(x.tollSeconds).toBeCloseTo((x.tollMetres / 1000) * unpriced.ratePerKm * 16, 6);
+    expect(x.tollConfidence).toBe('unpriced');
   });
 
   it('EXCLUDES tolled roads entirely under avoidTolls, and the control proves they were reachable', () => {
@@ -256,39 +277,208 @@ describe('tolls', () => {
 describe('the shipped objective', () => {
   it('is non-negative, which the A* admissibility proof depends on', () => {
     expect(OBJECTIVE.secondsPerKm).toBeGreaterThanOrEqual(0);
-    expect(OBJECTIVE.tollReluctanceSecondsPerKm).toBeGreaterThanOrEqual(0);
+    expect(OBJECTIVE.secondsPerRupee).toBeGreaterThanOrEqual(0);
+    for (const t of TOLL_ROADS) {
+      expect(t.ratePerKm).toBeGreaterThanOrEqual(0);
+      expect(t.feeRupees).toBeGreaterThanOrEqual(0);
+      expect(t.searchRatePerKm).toBeGreaterThanOrEqual(0);
+    }
   });
 
   it('REFUSES a negative preference rather than silently returning wrong routes', () => {
     const { graph, turns } = nearTie(false);
     expect(() => new Router(graph, turns, undefined, { ...NO_PREF, secondsPerKm: -1 })).toThrow(/admissible/);
-    expect(() => new Router(graph, turns, undefined, { ...NO_PREF, tollReluctanceSecondsPerKm: -1 })).toThrow(/admissible/);
+    expect(() => new Router(graph, turns, undefined, { ...NO_PREF, secondsPerRupee: -1 })).toThrow(/admissible/);
+    // And a negative AMOUNT in the table, which is the same defect one level down.
+    const bad = TOLL_ROADS.map((t) => (t.key === 'unpriced' ? { ...t, ratePerKm: -1 } : t));
+    expect(() => new Router(graph, turns, undefined, { ...NO_PREF, tollRoads: bad })).toThrow(/admissible/);
   });
 
   it('allows tolls by default, since the fastest road in this city is tolled', () => {
     expect(OBJECTIVE.avoidTollsByDefault).toBe(false);
   });
 
-  it('prices the toll from the VERIFIED tariff and a value of time inside its stated band', () => {
-    // The guard against the failure mode this constant is most exposed to: being quietly nudged
-    // toward whatever makes the OSRM divergence smaller. It can only sit where a real tariff and a
-    // defensible value of time put it, so a fitted number fails here rather than in review.
-    //
-    // Tariff 2.65 rupees/km, verified 2026-08-03 against three sources and cross-checked against
-    // the published full run (438 rupees over 165.5 km is 2.647/km). Band 150 to 300 rupees/hour.
-    // Note the inversion: a LOWER value of time makes the toll cost MORE seconds.
-    const TARIFF = 2.65;
-    const cheapestTime = (TARIFF / 300) * 3600; // 31.8, the time-rich end
-    const dearestTime = (TARIFF / 150) * 3600; // 63.6, the time-poor end
-    expect(OBJECTIVE.tollReluctanceSecondsPerKm).toBeGreaterThanOrEqual(cheapestTime);
-    expect(OBJECTIVE.tollReluctanceSecondsPerKm).toBeLessThanOrEqual(dearestTime);
+  it('bounds every toll amount to what a source can support, so a fitted number fails here', () => {
+    // The guard against the failure mode these constants are most exposed to: being quietly nudged
+    // toward whatever makes the OSRM divergence smaller. Each can only sit where a real board or a
+    // defensible judgement puts it, so a fitted number fails in tests rather than in review. This
+    // is the pattern that was applied to the old single tariff, kept as the table replaced it.
+    // Read through the CONTRACT type, not the const literal. `matrixKm` is optional and only the
+    // matrix road carries it, so the narrowed literal union would hide it behind a mechanism check
+    // and the assertion would silently test nothing.
+    const yamuna = TOLL_ROADS.find((t) => t.key === 'yamuna-expressway') as TollRoad;
+    const epe = TOLL_ROADS.find((t) => t.key === 'eastern-peripheral') as TollRoad;
 
-    // And it is the midpoint of the band, not an end picked because it scored better.
-    expect(OBJECTIVE.tollReluctanceSecondsPerKm).toBeCloseTo((TARIFF / 225) * 3600, 6);
+    // Yamuna bills at BARRIERS, verified from a plaza rate board and corroborated to the rupee by
+    // three cumulative Google Maps probes. A pure per-km model here would mean the mechanism was
+    // lost, and a zero ramp rate would restore the barrier dodge the hybrid exists to close.
+    expect(yamuna.mechanism).toBe('gate-hybrid');
+    expect(yamuna.feeRupees).toBe(140);
+    expect(yamuna.ratePerKm).toBeGreaterThan(0);
+    expect(yamuna.confidence).toBe('verified');
+    // A ramp charge rests on a reported basis, not a published one, so it can never be `verified`.
+    expect(yamuna.confidenceWithRamp).not.toBe('verified');
 
-    // CONTROL on the assertion itself: the superseded value really is outside the band, so the
-    // check above would have caught it. Without this, a band wide enough to admit anything passes.
-    expect(12).toBeLessThan(cheapestTime);
+    // EPE bills a published entry-exit matrix. Its DISTANCES are statutory, so the mechanism must
+    // carry the matrix itself: a per-km fallback would silently discard the notification.
+    expect(epe.mechanism).toBe('matrix');
+    expect(epe.matrixKm?.length).toBe(EPE_PLAZAS.length);
+    expect(epe.fareRoundingRupees).toBe(5);
+
+    // THE RATE IS THE FITTED ONE, AND THE FIT IS THE TEST. A rate is admissible only if EVERY cell
+    // of the current rate board reproduces at it, under the published rounding. This is what stops
+    // the rate being nudged toward whatever makes the OSRM divergence smaller: a fitted number
+    // fails here rather than in review.
+    const SIHOL = EPE_PLAZAS.findIndex((p) => p.label === 'Pelak/Sihol');
+    const SIHOL_BOARD: readonly (readonly [string, number])[] = [
+      ['Main Plaza Jakhauli', 280], ['Mawikalan', 245], ['Badagaon', 225], ['Duhai', 180],
+      ['NE3 Interchange', 165], ['Dasna', 160], ['Bilakbarpur', 120], ['Fatehpur Rampur', 95],
+      ['Maujpur', 35], ['Main Plaza Chhajju Nagar', 25],
+    ];
+    const fare = (rate: number, km: number): number => 5 * Math.round((rate * km) / 5);
+    const fits = (rate: number): number => {
+      let ok = 0;
+      for (const [label, posted] of SIHOL_BOARD) {
+        const j = EPE_PLAZAS.findIndex((p) => p.label === label);
+        const km = epe.matrixKm?.[SIHOL]?.[j];
+        if (km !== undefined && fare(rate, km) === posted) ok++;
+      }
+      return ok;
+    };
+    expect(fits(epe.ratePerKm)).toBe(SIHOL_BOARD.length);
+
+    // CONTROL on that assertion: the fit is TIGHT, so it can actually reject. The admissible band
+    // is [1.9457, 1.9526), narrower than a paisa either way, and both the superseded 1.71 estimate
+    // and the older board's own rate fail it. Without this, a check that passes at any rate would
+    // prove nothing.
+    expect(fits(1.71)).toBeLessThan(SIHOL_BOARD.length);
+    expect(fits(1.89)).toBeLessThan(SIHOL_BOARD.length);
+    expect(fits(1.99)).toBeLessThan(SIHOL_BOARD.length);
+
+    // Seconds per rupee is the cost of an hour of driving inverted. Note the inversion: a LOWER
+    // cost per hour makes a rupee of toll worth MORE seconds of detour.
+    expect(OBJECTIVE.secondsPerRupee).toBeCloseTo(3600 / 550, 9);
+
+    // CONTROL on the objective itself: the superseded 225 rupees/hour really is outside this, so a
+    // silent revert would be caught. At 16 s per rupee a 140 rupee barrier bought 37 minutes of
+    // detour, which is the defect the move was made to fix.
+    expect(3600 / 225).toBeGreaterThan(OBJECTIVE.secondsPerRupee * 2);
+  });
+
+  it('bills a barrier once per PLAZA, not once per booth node', () => {
+    // A plaza is several booth nodes, one per lane and direction, and OSM strings them along the
+    // carriageway rather than placing them at a point: the Chhajju Nagar plaza is two nodes 0.4 km
+    // apart, both on the through carriageway, so ONE crossing meets both. Counting nodes bills that
+    // crossing twice. Measured on the real graph, which is where this shape came from.
+    const YAMUNA = TOLL_ROADS.find((t) => t.key === 'yamuna-expressway') as TollRoad;
+    const tags = { highway: 'motorway', name: 'Yamuna Expressway', toll: 'yes', oneway: 'no', maxspeed: '100' };
+    const booth = { barrier: 'toll_booth' };
+    const obj: ObjectiveConfig = { ...NO_PREF, secondsPerRupee: 1, tollRoads: TOLL_ROADS };
+
+    /**
+     * Booths on SEPARATE edges, which is the only arrangement that can double-bill. A vertex exists
+     * only where ways meet, so two booths on one edge already collapse by construction; the stub at
+     * node 7 forces the carriageway to split. `spanDeg` sets how far apart the two booths sit.
+     */
+    function crossing(spanDeg: number, withBooths: boolean): number {
+      const b = withBooths ? booth : undefined;
+      const g = build(
+        [
+          { id: 5, lat: 28.5, lon: 77.5 },
+          { id: 6, lat: 28.5 + spanDeg * 0.25, lon: 77.5, tags: b },
+          { id: 7, lat: 28.5 + spanDeg * 0.5, lon: 77.5 },
+          { id: 8, lat: 28.5 + spanDeg * 0.75, lon: 77.5, tags: b },
+          { id: 9, lat: 28.5 + spanDeg, lon: 77.5 },
+          { id: 11, lat: 28.5 + spanDeg * 0.5, lon: 77.51 },
+        ],
+        [
+          { id: 100, refs: [5, 6, 7, 8, 9], tags },
+          // A side road, solely so node 7 becomes a vertex and splits the carriageway in two.
+          { id: 101, refs: [7, 11], tags: { highway: 'secondary' } },
+        ],
+      );
+      const r = new Router(g.graph, g.turns, undefined, obj);
+      const start = edgeOf(g.graph, g.vertexOfNodeId, 100, 5, 7);
+      const end = edgeOf(g.graph, g.vertexOfNodeId, 100, 7, 9);
+      const route = r.route(start, 0, end, 1);
+      expect(route).not.toBeNull();
+      return (route as NonNullable<typeof route>).tollCost;
+    }
+
+    // 0.012 degrees of latitude is about 1.33 km, so the two booths sit ~670 m apart: ONE plaza.
+    const onePlaza = crossing(0.012, true);
+    expect(onePlaza).toBeGreaterThanOrEqual(YAMUNA.feeRupees);
+    expect(onePlaza).toBeLessThan(2 * YAMUNA.feeRupees);
+
+    // CONTROL 1, so this cannot pass by charging nothing or by never seeing a booth: the SAME
+    // geometry without booth tags charges only the per-km rate, far below a single fee. It is also
+    // not FREE, because an unbilled run on a toll road is the error that steers drivers onto it.
+    const noBooth = crossing(0.012, false);
+    expect(noBooth).toBeGreaterThan(0);
+    expect(noBooth).toBeLessThan(YAMUNA.feeRupees);
+
+    // CONTROL 2, so the collapse cannot pass by merging everything: booths ~7.8 km apart are two
+    // separate plazas and must bill twice. Without this, a rule that always returned a single fee
+    // would satisfy the assertion above and be wrong on every real multi-plaza trip.
+    const twoPlazas = crossing(0.14, true);
+    expect(twoPlazas).toBeGreaterThanOrEqual(2 * YAMUNA.feeRupees);
+  });
+
+  it('shows a bare figure only where a primary source supports it', () => {
+    // The display rule is enforcement, not a comment on a type: one function, both sides. A route
+    // that touched no toll road shows nothing at all, whatever confidence it reports.
+    expect(tollDisplayOf('verified', 0)).toBe('none');
+    expect(tollDisplayOf('unpriced', 0)).toBe('none');
+    expect(tollDisplayOf('verified', 1200)).toBe('exact');
+    expect(tollDisplayOf('approximated', 1200)).toBe('estimated');
+    expect(tollDisplayOf('unpriced', 1200)).toBe('estimated');
+  });
+
+  it('transcribed Table 5 correctly, checked by an identity rather than by re-reading it', () => {
+    const n = EPE_PLAZAS.length;
+    expect(EPE_TOLLABLE_KM.length).toBe(n);
+    expect(EPE_CARRIAGEWAY_KM.length).toBe(n);
+    for (let i = 0; i < n; i++) {
+      expect(EPE_TOLLABLE_KM[i]?.[i]).toBe(0);
+      for (let j = 0; j < n; j++) {
+        expect(EPE_TOLLABLE_KM[i]?.[j]).toBe(EPE_TOLLABLE_KM[j]?.[i]);
+        expect(EPE_CARRIAGEWAY_KM[i]?.[j]).toBe(EPE_CARRIAGEWAY_KM[j]?.[i]);
+        // Table 5 adds the equivalent length of structures over 60 m, so it can only ever exceed
+        // Table 2. A cell below it would be a transposed digit.
+        expect(EPE_TOLLABLE_KM[i]?.[j] ?? 0).toBeGreaterThanOrEqual(EPE_CARRIAGEWAY_KM[i]?.[j] ?? 0);
+      }
+    }
+    // THE IDENTITY THAT CATCHES A MISTYPED DIGIT. Structures sit on fixed spans of road, so the ten
+    // adjacent-plaza allowances must sum to the end-to-end allowance. Those are 21 separately
+    // transcribed cells across two tables, and a single wrong digit in any of them breaks this.
+    let adjacent = 0;
+    for (let i = 0; i + 1 < n; i++) {
+      adjacent += (EPE_TOLLABLE_KM[i]?.[i + 1] ?? 0) - (EPE_CARRIAGEWAY_KM[i]?.[i + 1] ?? 0);
+    }
+    const endToEnd = (EPE_TOLLABLE_KM[0]?.[n - 1] ?? 0) - (EPE_CARRIAGEWAY_KM[0]?.[n - 1] ?? 0);
+    expect(adjacent).toBeCloseTo(endToEnd, 2);
+
+    // Chainages are ascending, which is what makes "spans a..b entered at a and left at b+1" true.
+    for (let i = 0; i + 1 < n; i++) {
+      expect(EPE_PLAZAS[i + 1]?.chainageKm ?? 0).toBeGreaterThan(EPE_PLAZAS[i]?.chainageKm ?? 0);
+    }
+  });
+
+  it('never leaves a tolled road silently free, and never tolls a tagging error', () => {
+    // Every entry must charge something by one mechanism or the other. An entry with no fee and no
+    // rate would be a toll road the router treats as free, which is the one error that actively
+    // steers drivers onto it.
+    for (const t of TOLL_ROADS) {
+      const charges = t.mechanism === 'gate-hybrid' ? t.feeRupees > 0 && t.ratePerKm > 0 : t.ratePerKm > 0;
+      expect(charges).toBe(true);
+      // And the SEARCH must feel it too. A road priced only at billing time steers nothing, so a
+      // zero search rate would leave the router indifferent to a toll it later charges for.
+      expect(t.searchRatePerKm).toBeGreaterThan(0);
+    }
+    // And the three ways excluded as tagging errors are excluded by ID, not by class, so a future
+    // extract that renames one of them does not silently re-toll a residential street.
+    expect(TOLL_TAGGING_ERRORS.length).toBe(3);
+    expect(new Set(TOLL_TAGGING_ERRORS).size).toBe(3);
   });
 
   it('states an exchange rate inside the driver-plausible band of 1 minute per 2 to 3 km', () => {

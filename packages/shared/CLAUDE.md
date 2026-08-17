@@ -17,6 +17,10 @@ assume it exists.
   stale answers** (charter item 6). Never reuse or reset it.
 - **`Route.geometry` is full-fidelity edge shape geometry.** Not vertex-to-vertex. Anything
   that simplifies it beyond sub-pixel tolerance at max zoom breaks charter items 1 and 2.
+- **`Route.tollDisplay` decides whether a rupee figure may be shown bare or must be labelled an
+  estimate, and a view may NEVER decide that for itself.** The rule lives in `toll.ts` as a
+  function both sides call, because a ⛔ in a doc comment is a prompt and a function is enforcement.
+  An estimate presented as a fact looks exactly like a fact, so the failure is silent.
 - **`BuildReport.dedupe` counts must be non-zero.** The two extracts overlap along the
   Central/Northern seam, so a zero duplicate count means the dedupe never ran.
 - **Imports:** `config/` only. Never a package, never Node built-ins, never the DOM. This

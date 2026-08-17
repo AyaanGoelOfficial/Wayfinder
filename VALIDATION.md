@@ -12,10 +12,10 @@ router, not a change in the dice.
 
 | Metric | Value | Threshold | Verdict |
 |---|---|---|---|
-| Distance, median absolute delta | 3.70% | 3.00% | FAIL |
-| Distance, p95 absolute delta | 25.26% | 7.00% | FAIL |
-| Duration, median absolute delta | 11.29% | reported only | n/a |
-| Duration, p95 absolute delta | 26.19% | reported only | n/a |
+| Distance, median absolute delta | 2.15% | 3.00% | PASS |
+| Distance, p95 absolute delta | 16.46% | 7.00% | FAIL |
+| Duration, median absolute delta | 7.38% | reported only | n/a |
+| Duration, p95 absolute delta | 23.91% | reported only | n/a |
 
 Compared 56 pairs (6 landmark, 50 random). Skipped 0.
 
@@ -38,6 +38,30 @@ documented modelling difference, with **both thresholds left exactly where they 
 The acceptance paragraph, the derivations, and the reasoning are in `DESIGN.md`. If you are here
 because a number moved, the question to ask is which preference changed and whether its
 derivation still holds, NOT how to get these two cells green.
+
+### The distance median moved 3.33% to 3.70% at gate 5. ACCEPTED. Do not "fix" it back.
+
+A correctness fix at gate 5 changed four routes, and the aggregate metric got WORSE because the
+routes got BETTER. Recorded per pair so a future reader does not read it as a regression and undo
+it. Two defects were fixed: an inadmissible A\* heuristic on end edges paired with a termination
+test that ignored the end refund, and a search state that judged via-way restrictions against the
+cheapest arrival rather than the actual one. `DESIGN.md` holds both.
+
+| Pair | Our cost | Distance vs OSRM | Duration vs OSRM | What actually changed |
+|---|---|---|---|---|
+| random 10 | 5949.4 to 5917.2 | -2.26% to +3.35% | 28.85% to -0.91% | 3.4 km longer, 15.9 min faster |
+| random 14 | 3234.8 to 3115.5 | -0.96% to -0.01% | 4.15% to 1.33% | better on both |
+| random 48 | 3566.8 to 3552.3 | 0.34% to -6.84% | 16.99% to 11.68% | 3.4 km SHORTER, 2.2 min faster |
+| random 49 | 2415.3 to 2391.8 | 9.29% to 7.42% | 20.00% to 18.38% | better on both |
+
+All four are strictly cheaper under our own objective, which is what a correctness fix must do,
+and every duration divergence improved. The aggregate followed: duration median 11.41% to 11.29%,
+duration p95 27.44% to 26.19%. The median degradation is almost entirely `random 48`, which is now
+3.4 km shorter and 2.2 minutes faster than the route it replaced, and diverges MORE from OSRM
+because OSRM's route is the longer one. `random 10` is the same shape and is tagged OUTSIDE AREA,
+so its comparison was never reliable.
+
+Thresholds stay at 3% and 7%.
 
 **Duration is reported and not asserted, on purpose.** Only 1,773 of 121,084 drivable ways in
 this area carry a parseable `maxspeed`, so 98.5% of our durations come from the class-default
@@ -69,7 +93,7 @@ that boundary plus a 3 km buffer while OSRM has all of India. Counting the OSM n
 route that our clip does not contain shows 16 of these 56 pairs are answered by leaving the
 area. Those pairs measure the clip boundary rather than the router. They are NOT excluded from
 the statistics here, and excluding them would not rescue the result anyway: median becomes
-2.42% and p95 28.76% over the remaining 40 pairs.
+1.41% and p95 15.45% over the remaining 40 pairs.
 Landmark pairs sit well inside the area and carry no such excuse, which is why
 `gautam-buddha-university to jewar` is the pair that matters most below.
 
@@ -80,16 +104,16 @@ can be looked at rather than argued about.
 
 | Pair | Ours | OSRM | Distance delta | Duration delta | Map |
 |---|---|---|---|---|---|
-| random 39 | 37.51 km | 58.29 km | -35.65% | 23.72% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.42606%2C77.52154%3B28.17107%2C77.41616) |
 | random 26 | 42.32 km | 65.66 km | -35.55% | 11.32% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.27868%2C77.40811%3B28.21551%2C77.73140) |
-| random 15 | 59.01 km | 82.43 km | -28.41% | 17.13% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.39632%2C77.47635%3B28.10063%2C77.70228) |
-| random 6 | 48.98 km | 64.62 km | -24.21% | 20.50% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.07570%2C77.74837%3B28.25312%2C77.43960) |
-| random 5 | 92.78 km | 74.95 km | 23.79% | 25.93% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.44403%2C77.74105%3B28.27131%2C77.29718) |
-| random 32 | 87.73 km | 71.78 km | 22.22% | 25.63% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.56899%2C77.68970%3B28.27112%2C77.34613) |
-| random 3 | 66.12 km | 54.30 km | 21.77% | 23.58% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.38135%2C77.38221%3B28.12124%2C77.56971) |
+| random 6 | 48.98 km | 64.62 km | -24.21% | 20.51% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.07570%2C77.74837%3B28.25312%2C77.43960) |
 | random 18 | 18.71 km | 23.46 km | -20.25% | 7.25% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.56806%2C77.45445%3B28.61120%2C77.57805) |
-| jewar to gaur-city | 73.14 km | 63.11 km | 15.89% | 8.00% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.20165%2C77.62654%3B28.60542%2C77.42744) |
+| jewar to gaur-city | 73.14 km | 63.49 km | 15.19% | 6.75% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.20165%2C77.62654%3B28.60542%2C77.42744) |
+| random 37 | 67.16 km | 58.50 km | 14.81% | -4.40% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.26473%2C77.40213%3B28.66407%2C77.42792) |
 | random 33 | 71.58 km | 82.40 km | -13.13% | 31.46% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.10370%2C77.70067%3B28.60756%2C77.65509) |
+| random 49 | 22.31 km | 20.07 km | 11.17% | 18.19% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.61024%2C77.30111%3B28.58807%2C77.44692) |
+| random 30 | 39.89 km | 35.89 km | 11.14% | 15.59% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.52758%2C77.48614%3B28.40643%2C77.75969) |
+| dadri to gautam-buddha-university | 18.68 km | 20.90 km | -10.58% | 11.38% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.53873%2C77.53722%3B28.42268%2C77.52464) |
+| random 17 | 58.53 km | 53.59 km | 9.21% | 9.19% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.49369%2C77.35273%3B28.58750%2C77.63125) |
 
 ## Every comparison, with the reason for each residual
 
@@ -106,62 +130,62 @@ cause is an open question rather than an accepted difference.
 
 | Pair | Kind | Ours km | OSRM km | Dist delta | Ours min | OSRM min | Dur delta | Cause |
 |---|---|---|---|---|---|---|---|---|
-| jewar to gaur-city | landmark | 73.14 | 63.11 | 15.89% | 68.6 | 63.5 | 8.00% | COST MODEL |
-| gaur-city to alpha-1 | landmark | 19.97 | 20.00 | -0.12% | 30.4 | 22.7 | 33.52% | COST MODEL |
-| alpha-1 to surajpur | landmark | 7.72 | 7.71 | 0.10% | 12.1 | 9.5 | 26.97% | COST MODEL |
+| jewar to gaur-city | landmark | 73.14 | 63.49 | 15.19% | 68.6 | 64.2 | 6.75% | COST MODEL |
+| gaur-city to alpha-1 | landmark | 19.97 | 19.97 | 0.02% | 30.4 | 22.7 | 33.78% | COST MODEL |
+| alpha-1 to surajpur | landmark | 7.72 | 7.71 | 0.12% | 12.1 | 9.5 | 27.04% | COST MODEL |
 | surajpur to dadri | landmark | 7.84 | 7.99 | -1.95% | 12.7 | 10.7 | 18.67% | COST MODEL |
-| dadri to gautam-buddha-university | landmark | 18.68 | 20.92 | -10.68% | 32.8 | 29.4 | 11.27% | COST MODEL |
-| gautam-buddha-university to jewar | landmark | 31.19 | 31.90 | -2.23% | 50.4 | 41.7 | 20.64% | COST MODEL |
+| dadri to gautam-buddha-university | landmark | 18.68 | 20.90 | -10.58% | 32.8 | 29.4 | 11.38% | COST MODEL |
+| gautam-buddha-university to jewar | landmark | 31.19 | 31.46 | -0.86% | 50.4 | 41.0 | 22.87% | COST MODEL |
 | random 1 | random | 27.45 | 27.50 | -0.19% | 45.7 | 43.4 | 5.45% | COST MODEL |
 | random 2 | random | 54.57 | 55.60 | -1.84% | 63.9 | 59.1 | 8.04% | OUTSIDE AREA |
-| random 3 | random | 66.12 | 54.30 | 21.77% | 65.6 | 53.1 | 23.58% | COST MODEL |
+| random 3 | random | 55.09 | 54.30 | 1.45% | 56.2 | 53.1 | 5.91% | COST MODEL |
 | random 4 | random | 33.29 | 35.55 | -6.35% | 40.9 | 34.7 | 17.67% | COST MODEL |
-| random 5 | random | 92.78 | 74.95 | 23.79% | 84.0 | 66.7 | 25.93% | COST MODEL |
-| random 6 | random | 48.98 | 64.62 | -24.21% | 84.9 | 70.5 | 20.50% | OUTSIDE AREA |
+| random 5 | random | 76.70 | 76.64 | 0.08% | 67.0 | 66.1 | 1.40% | COST MODEL |
+| random 6 | random | 48.98 | 64.62 | -24.21% | 84.9 | 70.5 | 20.51% | OUTSIDE AREA |
 | random 7 | random | 35.66 | 36.91 | -3.39% | 51.6 | 53.1 | -2.79% | OUTSIDE AREA |
-| random 8 | random | 67.88 | 66.81 | 1.59% | 67.5 | 60.2 | 12.05% | OUTSIDE AREA |
-| random 9 | random | 51.09 | 48.85 | 4.59% | 48.7 | 46.5 | 4.74% | OUTSIDE AREA |
-| random 10 | random | 62.78 | 60.74 | 3.35% | 52.8 | 53.3 | -0.91% | OUTSIDE AREA |
-| random 11 | random | 75.00 | 80.91 | -7.31% | 69.5 | 56.2 | 23.56% | COST MODEL |
-| random 12 | random | 76.69 | 83.52 | -8.17% | 87.2 | 83.4 | 4.53% | OUTSIDE AREA |
-| random 13 | random | 36.93 | 34.28 | 7.74% | 39.6 | 43.0 | -7.96% | COST MODEL |
-| random 14 | random | 39.50 | 39.50 | -0.01% | 40.6 | 40.1 | 1.33% | COST MODEL |
-| random 15 | random | 59.01 | 82.43 | -28.41% | 102.3 | 87.4 | 17.13% | COST MODEL |
-| random 16 | random | 43.60 | 43.62 | -0.05% | 50.1 | 47.4 | 5.73% | COST MODEL |
-| random 17 | random | 58.53 | 53.61 | 9.18% | 79.2 | 72.5 | 9.17% | OUTSIDE AREA |
+| random 8 | random | 67.28 | 66.80 | 0.72% | 65.0 | 60.2 | 8.10% | OUTSIDE AREA |
+| random 9 | random | 51.09 | 48.86 | 4.56% | 48.7 | 46.5 | 4.73% | OUTSIDE AREA |
+| random 10 | random | 62.78 | 60.74 | 3.35% | 52.8 | 53.3 | -0.90% | OUTSIDE AREA |
+| random 11 | random | 81.03 | 80.91 | 0.14% | 53.1 | 56.2 | -5.53% | COST MODEL |
+| random 12 | random | 77.30 | 83.52 | -7.44% | 86.9 | 83.4 | 4.22% | OUTSIDE AREA |
+| random 13 | random | 36.93 | 34.65 | 6.59% | 39.6 | 37.9 | 4.36% | COST MODEL |
+| random 14 | random | 39.50 | 39.51 | -0.03% | 40.6 | 40.2 | 1.05% | COST MODEL |
+| random 15 | random | 81.24 | 82.43 | -1.44% | 99.5 | 87.4 | 13.83% | COST MODEL |
+| random 16 | random | 43.60 | 43.64 | -0.10% | 50.1 | 47.6 | 5.21% | COST MODEL |
+| random 17 | random | 58.53 | 53.59 | 9.21% | 79.2 | 72.5 | 9.19% | OUTSIDE AREA |
 | random 18 | random | 18.71 | 23.46 | -20.25% | 34.1 | 31.8 | 7.25% | COST MODEL |
 | random 19 | random | 15.56 | 15.55 | 0.10% | 19.4 | 18.4 | 5.92% | COST MODEL |
-| random 20 | random | 28.16 | 28.92 | -2.62% | 39.3 | 34.2 | 14.63% | COST MODEL |
-| random 21 | random | 73.04 | 76.10 | -4.02% | 56.3 | 60.3 | -6.76% | COST MODEL |
+| random 20 | random | 28.16 | 28.92 | -2.61% | 39.3 | 34.2 | 14.66% | COST MODEL |
+| random 21 | random | 73.04 | 76.09 | -4.00% | 56.3 | 60.3 | -6.69% | COST MODEL |
 | random 22 | random | 39.42 | 37.01 | 6.52% | 61.9 | 57.6 | 7.48% | COST MODEL |
-| random 23 | random | 12.13 | 12.12 | 0.10% | 21.1 | 18.8 | 12.24% | TOO CLOSE TO CALL |
-| random 24 | random | 56.96 | 57.76 | -1.38% | 55.8 | 51.6 | 8.27% | COST MODEL |
-| random 25 | random | 46.81 | 47.39 | -1.23% | 46.4 | 48.2 | -3.70% | COST MODEL |
+| random 23 | random | 12.13 | 12.12 | 0.10% | 21.1 | 18.8 | 12.38% | TOO CLOSE TO CALL |
+| random 24 | random | 56.96 | 57.76 | -1.38% | 55.8 | 51.5 | 8.40% | COST MODEL |
+| random 25 | random | 46.81 | 47.39 | -1.23% | 46.4 | 48.4 | -4.09% | COST MODEL |
 | random 26 | random | 42.32 | 65.66 | -35.55% | 74.7 | 67.1 | 11.32% | COST MODEL |
 | random 27 | random | 10.80 | 11.16 | -3.27% | 17.8 | 16.0 | 11.51% | COST MODEL |
-| random 28 | random | 69.24 | 69.77 | -0.76% | 50.3 | 57.3 | -12.30% | COST MODEL |
+| random 28 | random | 69.24 | 69.11 | 0.19% | 50.3 | 56.9 | -11.68% | COST MODEL |
 | random 29 | random | 28.33 | 28.34 | -0.02% | 37.8 | 35.5 | 6.32% | COST MODEL |
 | random 30 | random | 39.89 | 35.89 | 11.14% | 54.7 | 47.3 | 15.59% | OUTSIDE AREA |
 | random 31 | random | 25.17 | 25.77 | -2.32% | 32.6 | 32.7 | -0.39% | OUTSIDE AREA |
-| random 32 | random | 87.73 | 71.78 | 22.22% | 98.2 | 78.2 | 25.63% | COST MODEL |
+| random 32 | random | 68.15 | 71.78 | -5.05% | 76.7 | 78.2 | -1.92% | COST MODEL |
 | random 33 | random | 71.58 | 82.40 | -13.13% | 111.8 | 85.1 | 31.46% | OUTSIDE AREA |
 | random 34 | random | 31.99 | 32.15 | -0.49% | 52.9 | 46.5 | 13.56% | COST MODEL |
 | random 35 | random | 64.37 | 64.32 | 0.09% | 56.2 | 57.0 | -1.43% | COST MODEL |
-| random 36 | random | 44.10 | 43.48 | 1.45% | 54.8 | 51.2 | 7.12% | COST MODEL |
-| random 37 | random | 58.11 | 58.49 | -0.65% | 66.5 | 61.7 | 7.80% | COST MODEL |
+| random 36 | random | 44.10 | 43.43 | 1.55% | 54.8 | 51.7 | 5.95% | COST MODEL |
+| random 37 | random | 67.16 | 58.50 | 14.81% | 59.1 | 61.8 | -4.40% | COST MODEL |
 | random 38 | random | 69.91 | 69.68 | 0.33% | 59.0 | 60.1 | -1.80% | COST MODEL |
-| random 39 | random | 37.51 | 58.29 | -35.65% | 64.1 | 51.8 | 23.72% | COST MODEL |
-| random 40 | random | 38.72 | 40.38 | -4.12% | 55.6 | 46.3 | 20.05% | OUTSIDE AREA |
-| random 41 | random | 49.54 | 46.46 | 6.63% | 52.3 | 44.8 | 16.64% | COST MODEL |
-| random 42 | random | 72.28 | 76.03 | -4.94% | 77.9 | 68.5 | 13.77% | OUTSIDE AREA |
+| random 39 | random | 57.96 | 58.29 | -0.57% | 48.0 | 51.8 | -7.28% | COST MODEL |
+| random 40 | random | 38.72 | 39.50 | -1.97% | 55.6 | 45.6 | 21.96% | OUTSIDE AREA |
+| random 41 | random | 49.54 | 45.76 | 8.25% | 52.3 | 44.7 | 16.92% | COST MODEL |
+| random 42 | random | 72.28 | 76.03 | -4.94% | 77.9 | 68.4 | 13.87% | OUTSIDE AREA |
 | random 43 | random | 32.36 | 35.23 | -8.15% | 43.1 | 36.8 | 17.03% | OUTSIDE AREA |
 | random 44 | random | 76.48 | 77.33 | -1.10% | 60.0 | 65.8 | -8.76% | COST MODEL |
-| random 45 | random | 73.41 | 77.83 | -5.67% | 86.3 | 75.5 | 14.33% | OUTSIDE AREA |
-| random 46 | random | 75.80 | 81.08 | -6.52% | 85.5 | 80.9 | 5.66% | COST MODEL |
+| random 45 | random | 77.00 | 77.83 | -1.07% | 75.2 | 75.5 | -0.49% | OUTSIDE AREA |
+| random 46 | random | 75.80 | 81.08 | -6.52% | 85.5 | 80.9 | 5.67% | COST MODEL |
 | random 47 | random | 65.54 | 67.66 | -3.13% | 69.3 | 68.7 | 0.86% | COST MODEL |
-| random 48 | random | 44.33 | 47.58 | -6.84% | 46.1 | 41.3 | 11.68% | OUTSIDE AREA |
-| random 49 | random | 22.31 | 20.77 | 7.42% | 31.1 | 26.3 | 18.38% | COST MODEL |
-| random 50 | random | 40.32 | 40.42 | -0.24% | 41.1 | 42.4 | -2.98% | COST MODEL |
+| random 48 | random | 44.33 | 47.58 | -6.84% | 46.1 | 41.3 | 11.69% | OUTSIDE AREA |
+| random 49 | random | 22.31 | 20.07 | 11.17% | 31.1 | 26.4 | 18.19% | COST MODEL |
+| random 50 | random | 40.94 | 40.42 | 1.30% | 40.9 | 42.4 | -3.55% | COST MODEL |
 
 ### Residuals by cause
 

@@ -55,6 +55,93 @@ export interface SnapResult {
  * `secondsPerKm` and `tollReluctanceSecondsPerKm` must be non-negative for the same reason every
  * turn cost must be: A* admissibility depends on nothing ever making a path cheaper.
  */
+/**
+ * How much of a toll figure we are willing to put in front of a driver.
+ *
+ * A DELIBERATE DIFFERENCE FROM GOOGLE, which shows an estimated amount for every toll road and
+ * gives the reader no way to tell which of those figures it stands behind. We show a rupee amount
+ * only where we can defend it, and otherwise say that a toll exists without pretending to know its
+ * price. The router is unaffected: an approximated cost still steers, because the uncertainty
+ * belongs in what is displayed and not in what the search knows.
+ *
+ *   verified      mechanism and amount both established from a primary source. Show the rupees
+ *                 bare, with no hedge, because we stand behind the figure.
+ *   approximated  mechanism established, amount rests on a reported rather than published basis.
+ *                 Show the rupees, labelled as an estimate.
+ *   unpriced      the road charges, and we have not established what. Show a stand-in rate,
+ *                 labelled as an estimate. NEVER treated as free.
+ *
+ * The line that moved between gate 5 and gate 6 is where the AMOUNT appears, not where the
+ * confidence does: `approximated` used to show no figure at all. Once every road had a defensible
+ * per-kilometre basis, withholding the number stopped protecting the reader and started leaving
+ * them with less than we know. What must never happen is a hedged figure and a certain one looking
+ * the same, which is what `TollDisplay` exists to prevent.
+ */
+export type TollConfidence = 'verified' | 'approximated' | 'unpriced';
+
+/**
+ * HOW A ROUTE'S TOLL FIGURE MAY BE RENDERED. Derived from `TollConfidence`, never from the call site.
+ *
+ *   none        this route pays nothing on a tolled road. Render no toll element at all.
+ *   exact       render the amount bare: `140`.
+ *   estimated   render the amount behind the estimate label the copy rules define.
+ *
+ * ⛔ THE PREFIX IS NOT A VIEW DECISION. A component that decides for itself when to write
+ * "Estimated" will get it right on the screen it was written for and wrong on the next one, and the
+ * failure is silent: an estimate presented as a fact looks exactly like a fact. The server derives
+ * this once, from the confidence of every road the route touched, and the client obeys it.
+ */
+export type TollDisplay = 'none' | 'exact' | 'estimated';
+
+/** How one road charges. Amounts and provenance live in `config/city.ts`. */
+export interface TollRoad {
+  readonly id: number;
+  readonly key: string;
+  readonly label: string;
+  /**
+   * `gate-hybrid` bills a flat fee per mainline barrier plus a per-km ramp charge; `matrix` bills a
+   * published entry-exit fare; `per-km` bills distance at a stated stand-in rate.
+   */
+  readonly mechanism: 'gate-hybrid' | 'matrix' | 'per-km';
+  /** Flat fee for one mainline barrier crossing. `gate-hybrid` only. */
+  readonly feeRupees: number;
+  /**
+   * This road's per-kilometre MONEY rate, whose role depends on the mechanism: the ramp charge
+   * under `gate-hybrid`, the rate applied to the matrix distance under `matrix`, and the whole
+   * charge under `per-km`.
+   */
+  readonly ratePerKm: number;
+  /**
+   * Tollable kilometres between every pair of plazas, indexed by plaza. `matrix` only.
+   *
+   * Symmetric with a zero diagonal. A route occupying inter-plaza spans a..b entered at plaza a and
+   * left at plaza b+1, so `matrixKm[a][b+1]` is its billed distance regardless of how far it drove.
+   */
+  readonly matrixKm?: readonly (readonly number[])[];
+  /** Published fares are multiples of this many rupees. `matrix` only. */
+  readonly fareRoundingRupees?: number;
+  /**
+   * WHAT THE SEARCH IS CHARGED PER KILOMETRE ON THIS ROAD, which is NOT what the driver is billed.
+   *
+   * ⛔ THE PROXY AND THE TRUTH ARE DIFFERENT NUMBERS ON PURPOSE, and this field is where that is
+   * declared. A shortest path can only minimise a cost that is additive over edges. Neither real
+   * mechanism is: a barrier fee is a step function of position and an entry-exit fare is a function
+   * of the whole run. Putting either into the search produced a measured defect, a 140 rupee fee
+   * landing on one 604 m edge as a 37 minute penalty, which the router answered by leaving the
+   * expressway and rejoining past the barrier.
+   *
+   * So the SEARCH sees a smooth per-km rate close to the road's real average, and the REPORTED
+   * `Route.tollCost` is computed once over the chosen path by that road's exact mechanism. The two
+   * agree closely and are never required to agree exactly. `DESIGN.md` states this once, under
+   * "The search proxy and the billed truth", for every road rather than per road.
+   */
+  readonly searchRatePerKm: number;
+  /** Confidence when only this road's primary mechanism was exercised. */
+  readonly confidence: TollConfidence;
+  /** Confidence when a ramp charge or an unmapped-booth fallback was involved. */
+  readonly confidenceWithRamp: TollConfidence;
+}
+
 export interface ObjectiveConfig {
   /** Seconds charged per kilometre travelled, on top of drive time. The distance preference. */
   readonly secondsPerKm: number;
@@ -67,8 +154,21 @@ export interface ObjectiveConfig {
    * invariant and `tests/engine/quality.test.ts` for the assertion over every class pair.
    */
   readonly qualityByRank?: readonly number[];
-  /** Extra seconds per kilometre on a tolled road. A reluctance, not a fare model. */
-  readonly tollReluctanceSecondsPerKm: number;
+  /**
+   * Seconds per rupee: what money is worth to the search. The ONE conversion every toll price
+   * passes through, whatever mechanism charged it.
+   *
+   * This replaced a per-kilometre toll reluctance, and the replacement is the point. That constant
+   * folded three separate things into one number: what a road charges, how it charges it, and what
+   * time is worth. Only the last is a preference of ours; the other two are facts about each road
+   * and live in `TOLL_ROADS`.
+   */
+  readonly secondsPerRupee: number;
+  /**
+   * The toll table, one entry per road. Optional: the toy graphs have no toll roads and pass
+   * nothing, which restores the behaviour this class had before tolls were priced at all.
+   */
+  readonly tollRoads?: readonly TollRoad[];
   /** Exclude tolled roads entirely unless a request overrides it. */
   readonly avoidTollsByDefault: boolean;
 }
@@ -159,6 +259,24 @@ export interface Route {
   readonly edgeIds: readonly number[];
   readonly instructions: readonly Instruction[];
   readonly profile: Profile;
+  /**
+   * What the driver pays in rupees, priced per road by that road's own exact mechanism.
+   *
+   * ⛔ NEVER RENDER THIS WITHOUT OBEYING `tollDisplay`. The number is always computed, because an
+   * estimated price still has to steer the router, but whether it may be shown bare or must be
+   * labelled an estimate is decided here and not in the view. A competitor estimates every toll
+   * road and marks none of them; the difference is the label, so the label is part of the contract.
+   *
+   * NOT `tollSeconds / secondsPerRupee`. The search paid a smooth per-km proxy; this is the billed
+   * truth over the chosen path. See `TollRoad.searchRatePerKm`.
+   */
+  readonly tollCost: number;
+  /** The weakest link across every tolled road this route uses, ramp charges included. */
+  readonly tollConfidence: TollConfidence;
+  /** Whether, and how, `tollCost` may be shown. Derived from `tollConfidence`, never re-derived. */
+  readonly tollDisplay: TollDisplay;
+  /** Metres of this route on tolled roads. Non-zero whenever a toll element should appear at all. */
+  readonly tollMetres: number;
 }
 
 // ---------------------------------------------------------------------------

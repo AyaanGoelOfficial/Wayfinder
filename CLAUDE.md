@@ -88,21 +88,9 @@ npm run gate:oracle -- --full   # ALSO re-derives the clip from raw extracts. 99
 npm run profile:route    # settled/relaxed counts beside wall time, for the gate 5 ladder
 ```
 
-Measurement and acceptance:
-
-```bash
-npm run validate         # 6 landmark + 50 random pairs vs OSRM. Median <3%, p95 <7%
-npm run diagnose:route   # WHY a pair diverges, grouped by cause -> DIVERGENCE.md. Add --all
-npm run calibrate:speeds # tagged maxspeed per class vs our defaults. Read the sample counts
-npm run calibrate:quality # surface/smoothness/lanes coverage per class. Controls printed first
-npm run diagnose:flattening # class ratio, slow-road share, and the straight-line-excess proof
-npm run experiment:speeds # A/B a speed table over the same 56 pairs. No rebuild needed
-npm run experiment:turns  # A/B the turn cost model. Reports SHAPE overlap, not just the delta
-npm run experiment:objective # distance and toll preferences. Route sanity BEFORE divergence
-npm run bench            # p50/p95/p99 for route, snap, search -> BENCHMARKS.md
-npm run verify:browser   # NOT BUILT until gate 8. Console, visual, network, GPS, throttled
-npm run acceptance       # NOT BUILT until gate 9. One pass/fail table, every charter item
-```
+**Measurement, calibration, diagnosis and the audits** are one command per script and the
+catalogue lives with them, in `scripts/CLAUDE.md`. `npm run validate` is the one to know:
+6 landmark + 50 random pairs vs OSRM, median <3%, p95 <7%.
 
 **There is no lint step.** TypeScript strict plus the copy gate is the whole static check;
 do not claim a lint gate ran. `build-city` does **not** hot-reload: the server memory-loads

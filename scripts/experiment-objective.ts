@@ -49,16 +49,16 @@ const base = { avoidTollsByDefault: false } as const;
 const Q = OBJECTIVE.qualityByRank;
 
 const CANDIDATES: readonly { name: string; cfg: ObjectiveConfig; note: string }[] = [
-  { name: 'none', cfg: { ...base, secondsPerKm: 0, tollReluctanceSecondsPerKm: 0 }, note: 'time only, the objective before any of this' },
-  { name: 'dist-12', cfg: { ...base, secondsPerKm: 12, tollReluctanceSecondsPerKm: 0 }, note: '1 min per 5 km, weaker than the stated band' },
-  { name: 'dist-20', cfg: { ...base, secondsPerKm: 20, tollReluctanceSecondsPerKm: 0 }, note: 'the 3 km/min end of the stated band, flat' },
-  { name: 'dist-24', cfg: { ...base, secondsPerKm: 24, tollReluctanceSecondsPerKm: 0 }, note: 'the 2.5 km/min midpoint, flat, no toll term' },
-  { name: 'dist-30', cfg: { ...base, secondsPerKm: 30, tollReluctanceSecondsPerKm: 0 }, note: 'the 2 km/min end of the stated band, flat' },
-  { name: 'flat-24+12', cfg: { ...base, secondsPerKm: 24, tollReluctanceSecondsPerKm: 12 }, note: 'the previously shipped objective, FLAT rate, before quality weights' },
-  { name: 'qual-24', cfg: { ...base, secondsPerKm: 24, tollReluctanceSecondsPerKm: 0, qualityByRank: Q }, note: 'quality weights with no toll term, to isolate the weights' },
-  { name: 'toll-vot300', cfg: { ...OBJECTIVE, tollReluctanceSecondsPerKm: (2.65 / 300) * 3600 }, note: 'the time-RICH end of the value-of-time band, 300 rupees/hour, 31.8 s/km' },
-  { name: 'SHIPPED', cfg: OBJECTIVE, note: 'the stated preference: 24 s/km, class quality weights, toll DERIVED at 42.4 s/km' },
-  { name: 'toll-vot150', cfg: { ...OBJECTIVE, tollReluctanceSecondsPerKm: (2.65 / 150) * 3600 }, note: 'the time-POOR end of the value-of-time band, 150 rupees/hour, 63.6 s/km' },
+  { name: 'none', cfg: { ...base, secondsPerKm: 0, secondsPerRupee: 0 }, note: 'time only, the objective before any of this' },
+  { name: 'dist-12', cfg: { ...base, secondsPerKm: 12, secondsPerRupee: 0 }, note: '1 min per 5 km, weaker than the stated band' },
+  { name: 'dist-20', cfg: { ...base, secondsPerKm: 20, secondsPerRupee: 0 }, note: 'the 3 km/min end of the stated band, flat' },
+  { name: 'dist-24', cfg: { ...base, secondsPerKm: 24, secondsPerRupee: 0 }, note: 'the 2.5 km/min midpoint, flat, no toll term' },
+  { name: 'dist-30', cfg: { ...base, secondsPerKm: 30, secondsPerRupee: 0 }, note: 'the 2 km/min end of the stated band, flat' },
+  { name: 'flat-24+12', cfg: { ...base, secondsPerKm: 24, secondsPerRupee: 3600 / 795 }, note: 'the pre-derivation objective: 12 s/km of toll implies a 795 rupees/hour value of time' },
+  { name: 'qual-24', cfg: { ...base, secondsPerKm: 24, secondsPerRupee: 0, qualityByRank: Q }, note: 'quality weights with no toll term, to isolate the weights' },
+  { name: 'toll-vot300', cfg: { ...OBJECTIVE, secondsPerRupee: 3600 / 300 }, note: 'the time-RICH end of the value-of-time band, 300 rupees/hour, 12 s per rupee' },
+  { name: 'SHIPPED', cfg: OBJECTIVE, note: 'the stated preference: 24 s/km, class quality weights, tolls priced per road' },
+  { name: 'toll-vot150', cfg: { ...OBJECTIVE, secondsPerRupee: 3600 / 150 }, note: 'the time-POOR end of the value-of-time band, 150 rupees/hour, 24 s per rupee' },
   { name: 'avoid-tolls', cfg: { ...OBJECTIVE, avoidTollsByDefault: true }, note: 'the opt-in mode, to prove it is reachable and produces routes' },
 ];
 

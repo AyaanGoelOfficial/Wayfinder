@@ -276,6 +276,15 @@ app.get<{ Querystring: { from?: string; to?: string } }>(ROUTES.route, async (re
       durationS: r.seconds,
       geometry: r.geometry,
       edgeIds: r.edges,
+      // Cost, confidence and tolled distance travel together on purpose: a client that has the
+      // amount without the confidence would show a rupee figure we cannot defend, which is exactly
+      // the behaviour this model exists to avoid.
+      tollCost: r.tollCost,
+      tollConfidence: r.tollConfidence,
+      // Copied, never recomputed. The engine priced the route and is the only thing that knows
+      // which roads it touched, so deriving the display tier again here would be a second opinion.
+      tollDisplay: r.tollDisplay,
+      tollMetres: r.tollMetres,
       // Turn-by-turn instructions are gate 7. Empty is honest; a fabricated list is not.
       instructions: [],
       profile: 'driving',

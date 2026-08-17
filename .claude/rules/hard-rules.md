@@ -71,6 +71,20 @@ reason, in the same message.
   restriction tables directly, the other checks that a rung's reported cost equals its own returned
   path's cost. Run the attribution before proposing a fix.
 
+### Review
+
+- **NEVER commit without checking the diffstat is PROPORTIONATE to the change you made.** Run
+  `git diff --stat` and compare the insertion count against the edit you believe you performed. A
+  30-line change reading 3,447 insertions means something rewrote files wholesale, and the commit
+  would be unreviewable: the real change is invisible inside a whole-file rewrite, so nobody can
+  see what shipped. Reason: this repo has NO `.gitattributes` and `core.autocrlf=false`, so each
+  file keeps whatever line endings it has, and it is mixed. `config/city.ts` and `DESIGN.md` are
+  CRLF while most `.ts` is LF. Any tool that rewrites a whole file normalises them and turns every
+  line into a change. Real case: writing nine files through Python with `newline=''` after reading
+  them with universal newlines converted CRLF to LF and inflated the diff from 664 insertions to
+  3,447. Prefer the editing tools, which preserve endings; if a script must write a file, read and
+  restore its original endings, and check the diffstat before staging either way.
+
 ### Measurement
 
 - **NEVER read the benchmark's load canary as a claim about absolute machine speed.** It is

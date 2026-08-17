@@ -95,6 +95,9 @@ export function serializeGraphArtifact(graph: Graph, turns: TurnTable): Uint8Arr
   u8.set(turns.edgeRestricted, E * 3);
   u8.set(graph.edgeClassRank, E * 4);
   u8.set(graph.edgeToll, E * 5);
+  u8.set(graph.edgeTollRoad, E * 6);
+  u8.set(graph.edgeTollGate, E * 7);
+  u8.set(graph.edgeTollSegment, E * 8);
 
   return bytes;
 }

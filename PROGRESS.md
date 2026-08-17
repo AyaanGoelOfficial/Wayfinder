@@ -13,12 +13,12 @@ Update this in the same change that invalidates a line in it, never as a follow-
 | 1 city build | closed. Graph, places and tiles from one merged, deduped source |
 | 2 map on screen | closed. Own PMTiles, own style, own SDF glyphs, Devanagari confirmed rendering |
 | 3 Dijkstra routing | closed. Route endpoint, client rendering, charter items 1 and 2 measured |
-| 4 OSRM validation | **CLOSED** as a documented modelling difference, thresholds untouched. Distance median **3.33%** against 3% and p95 **25.26%** against 7%, both fail as raw numbers. 0 router bugs, 0 graph defects; 39 cost model, 16 OSRM leaving the area, 1 too close to call, every pair named in `VALIDATION.md`. The residual is three stated preferences OSRM does not have: a locally calibrated speed table, a distance-and-quality preference, and a toll priced from the published tariff. Acceptance paragraph and reasoning in `DESIGN.md` |
-| 5 A\* and bidirectional | **A\* built and proved equal to Dijkstra**; `npm run gate:equality` routes all 39 via-node pair sites and all 12 via-way sites plus landmarks and breadth, 190 pairs, **0 mismatches on path AND cost**. Settled states cut 34.5% on re-routes, 53.3% on landmarks, 0.2% on initial routes. **Budgets cannot currently be judged: wall time on this machine is contaminated**, see below. Bidirectional NOT started |
+| 4 OSRM validation | **CLOSED** as a documented modelling difference, thresholds untouched. Distance median **2.15%** against 3% and p95 **16.46%** against 7% as of the gate 6 toll model, so the median now PASSES and the p95 does not. It read 3.33% / 25.26% at closure and 3.70% / 30.19% after the gate 5 correctness fixes; the statutory toll model is what brought both down. 0 router bugs, 0 graph defects. 0 router bugs, 0 graph defects; 39 cost model, 16 OSRM leaving the area, 1 too close to call, every pair named in `VALIDATION.md`. The residual is three stated preferences OSRM does not have: a locally calibrated speed table, a distance-and-quality preference, and a toll priced from the published tariff. Acceptance paragraph and reasoning in `DESIGN.md` |
+| 5 A\* and bidirectional | **A\* built and proved equal to Dijkstra**; `npm run gate:equality` routes all 39 via-node pair sites and all 12 via-way sites plus landmarks and breadth, 190 pairs, **0 mismatches on path AND cost**. Settled states cut 34.5% on re-routes, 53.3% on landmarks, 0.2% on initial routes. **CLOSED**: bidirectional built, proved equal on all four rungs, and SHIPPED as the served algorithm. The initial-route budget is accepted UNMET and documented as unmeasured on a quiet machine. **Wall time on this machine stays an upper bound**, see below |
 | 6 legality pass | NOT started. The U-turn penalty is specified in `DESIGN.md` and lands here |
 | 7 search and turn-by-turn | NOT started. Places index and fuzzy search exist; instructions do not |
 | 8 tracking | NOT started. Must not start before the U-turn penalty lands |
-| 9 phone verification | NOT started. Carries two on-the-ground checks nothing at a desk can do: read the POSTED car toll at the plaza against the 2.65 rupees/km in `config/city.ts`, and judge whether class is standing in acceptably for road surface |
+| 9 phone verification | NOT started. Carries two on-the-ground checks nothing at a desk can do: read the POSTED car toll at the plaza against `TOLL_ROADS` in `config/city.ts` (the Jewar mainline fee, and a Yamuna RAMP board, which is the one rate still resting on a single observation), and judge whether class is standing in acceptably for road surface |
 
 ## Known weaknesses
 
@@ -122,7 +122,20 @@ Update this in the same change that invalidates a line in it, never as a follow-
   may pay a minute for 25 km of highway over 57 km of village road, and nothing in the objective
   represents that. Nearest thing to a remaining gap.
 - **Toll data is in the graph, toll PRICE is in the objective.** 920 drivable ways carry `toll=yes`,
-  the only toll spelling present. Artifact v3. `avoidTolls` leaves 0 of 56 pairs unrouted.
+  the only toll spelling present. Artifact v5. `avoidTolls` leaves 0 of 56 pairs unrouted.
+- **SUPERSEDED AT GATE 6, and the two bullets above about the 2.65 rupees/km tariff are history.**
+  Neither road that carries our tolled network charges per kilometre. The Yamuna Expressway bills at
+  barriers plus ramp plazas; the Eastern Peripheral is a closed system billing a statutory matrix
+  from Gazette S.O. 613(E). The cost of an hour of driving was restated at 550 rupees under a name
+  that says what it is. Distance median 3.70% to **2.15%**, p95 30.19% to **16.46%**, the largest
+  single improvement recorded here. Reasoning in `DESIGN.md`; numbers reproducible by
+  `npm run report:tolls`.
+- **What the toll model still does NOT know.** NE3 collects only for exit from EPE, so the real
+  matrix is asymmetric at one plaza and we model it as symmetric; no validation pair reaches NE3.
+  Table 1 of the notification is not in our excerpt, so the per-kilometre rate is fitted to two rate
+  boards rather than read from the statute. Yamuna ramp fees rest on ONE photographed board and are
+  therefore not encoded at all, the road's reported per-km basis standing in. Each is deferred with
+  a revisit condition in `DESIGN.md`.
 - **Turn costs now EXIST, and closing that gap moved the shape as well as the number.** Distance
   median 3.39% to **2.73%**, inside its 3% threshold for the first time, and route shape overlap
   with OSRM 70.50% to 75.10%. Both moved together, so the routes genuinely improved rather than the

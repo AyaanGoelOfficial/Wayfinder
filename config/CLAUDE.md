@@ -21,6 +21,18 @@
   driver is in a field. Generous (500 m) is for a tapped or searched destination, which may
   legitimately sit off-road. A tracking code path using the destination radius is a bug, and
   the `dadri` fixture exists to catch exactly that. Never widen either to pass a test.
+- **`EPE_TOLLABLE_KM` is Table 5 of Gazette S.O. 613(E) and is STATUTORY. Never edit a cell to make
+  a fare look right.** It is verified by an identity in `tests/engine/objective.test.ts`, not by
+  re-reading: the ten adjacent-plaza structure allowances must sum to the end-to-end one, 23.434
+  against 23.433 km across 21 separately transcribed cells. `EPE_CARRIAGEWAY_KM` (Table 2) exists
+  ONLY so that check can run, and is never used for pricing.
+- **`EPE_CHAINAGE_AT_CLIP_SOUTH_END_KM` is FITTED, and `npm run calibrate:epe` is the only thing
+  that may set it.** Re-run it after any re-clip. A hand-edited anchor silently shifts which plaza
+  every route is billed between.
+- **Each toll road carries TWO prices and they are not the same number.** `searchRatePerKm` is the
+  smooth proxy the router minimises; `mechanism` is what the driver is billed. See the engine's
+  folder file and `DESIGN.md`. Structure and values also carry SEPARATE provenance, because an
+  official source can be right about the mechanism and two revisions stale about the amount.
 - **Semantic gates live in `fixtures/`, split into `routing.ts` and `search.ts`.** See that
   folder's `CLAUDE.md`. Do not add a landmark list back into this file.
 - **`TRACKING.nominalFixHz` is UI copy, not a timing assumption.** Measured under 4x CPU
