@@ -34,12 +34,15 @@ export function serializeGraphArtifact(graph: Graph, turns: TurnTable): Uint8Arr
   const enc = new TextEncoder();
   const statsJson = enc.encode(JSON.stringify({ graph: graph.stats, restrictions: turns.stats }));
   const turnsJson = enc.encode(JSON.stringify(turnsPayload));
+  // UTF-8 stated explicitly here for the same reason every file read in this repo states it: many
+  // of these names are Devanagari, and the Windows default codec mangles them silently.
+  const namesJson = enc.encode(JSON.stringify(graph.roadNames));
 
-  const jsonEnd = GRAPH_HEADER_BYTES + statsJson.length + turnsJson.length;
+  const jsonEnd = GRAPH_HEADER_BYTES + statsJson.length + turnsJson.length + namesJson.length;
   const f64Start = alignUp(jsonEnd, 8);
   const f64Count = V * 3 + E * 2;
   const i32Start = f64Start + f64Count * 8;
-  const i32Count = V + 1 + E * 4 + (S + 1) + P * 2;
+  const i32Count = V + 1 + E * 5 + (S + 1) + P * 2;
   const u8Start = i32Start + i32Count * 4;
   const total = u8Start + E * U8_SECTIONS_PER_EDGE;
 
@@ -55,11 +58,12 @@ export function serializeGraphArtifact(graph: Graph, turns: TurnTable): Uint8Arr
   head.setUint32(20, P, true);
   head.setUint32(24, statsJson.length, true);
   head.setUint32(28, turnsJson.length, true);
-  head.setUint32(32, 0, true);
+  head.setUint32(32, namesJson.length, true);
   head.setUint32(36, 0, true);
 
   bytes.set(statsJson, GRAPH_HEADER_BYTES);
   bytes.set(turnsJson, GRAPH_HEADER_BYTES + statsJson.length);
+  bytes.set(namesJson, GRAPH_HEADER_BYTES + statsJson.length + turnsJson.length);
 
   const f64 = new Float64Array(buf, f64Start, f64Count);
   let o = 0;
@@ -84,6 +88,7 @@ export function serializeGraphArtifact(graph: Graph, turns: TurnTable): Uint8Arr
   putI(graph.edgeFrom);
   putI(graph.edgeTo);
   putI(graph.edgeShape);
+  putI(graph.edgeNameId);
   putI(graph.shapeOffset);
   putI(graph.shapeLat);
   putI(graph.shapeLon);
@@ -98,6 +103,7 @@ export function serializeGraphArtifact(graph: Graph, turns: TurnTable): Uint8Arr
   u8.set(graph.edgeTollRoad, E * 6);
   u8.set(graph.edgeTollGate, E * 7);
   u8.set(graph.edgeTollSegment, E * 8);
+  u8.set(graph.edgeRoundabout, E * 9);
 
   return bytes;
 }

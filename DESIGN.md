@@ -533,6 +533,257 @@ more attractive. We now buy 2.36% more distance for 1.54% less driving.
 
 ---
 
+## Gate 6, CLOSED. Two mechanisms, both evidenced, and one road only half tagged.
+
+**Decision: close gate 6. The toll model is complete for both roads that carry our tolled network,
+each priced by its own mechanism from its own dated source, with the gaps named rather than filled
+by inference.**
+
+**What is settled.**
+
+| Road | Structure, and its source | Amount, and its source | Confidence |
+|---|---|---|---|
+| Eastern Peripheral | Gazette S.O. 613(E), 03-02-2025, Table 5 | fitted from two rate boards against Table 5 | `verified` |
+| Yamuna, mainline | plaza board photographed in person | the same board, 140 rupees for a car | `verified` |
+| Yamuna, ramps | ramp booths marked from OSM | **not established, one board only** | `approximated` |
+| Anything else `toll=yes` | tagged in OSM | the EPE per-km rate as a stand-in | `unpriced` |
+
+Structure and amount carry separate sources and dates throughout, which is the YEIDA lesson: an
+official source can be right about the mechanism and two revisions stale about the price.
+
+**Validation, at the close.** Distance median **3.70% to 2.15%**, which passes its 3% threshold for
+the first time since gate 4. p95 30.19% to 16.46%, still failing 7%. Duration median 8.97% to 7.38%,
+p95 27.44% to 23.91%. **Thresholds untouched, and the p95 is two populations rather than a backlog:**
+31 of 56 routes are SHORTER than OSRM and 22 are longer, so the tail is not one defect being
+approached from one side. `VALIDATION.md` records the split.
+
+### The three changes were not separable by their totals, and one of them did nothing at all
+
+`npm run isolate:tolls` turns each change off from the current state, one at a time, over the same
+graph in the same process. The reconstruction is validated by turning all three off together, which
+reproduces the previous state exactly: 130.7 / 287.3 / 10.5 km against the figures recorded before
+any of them landed.
+
+```
+tolled km across the 56 validation pairs
+  configuration                                 yamuna-ex  eastern-p   unpriced      total
+  current state, all three changes in                61.6      546.7        0.0      608.3
+  A off: 225 rupees/hour instead of 550              51.1      395.3        0.0      446.5
+  B off: ramps back to unpriced                      61.1      529.0       18.1      608.3
+  C off: gate roads free between barriers            90.4      546.7        0.0      637.1
+  all three off together                            130.7      287.3       10.5      428.4
+```
+
+- **A, the cost of driving, is worth +161.8 km and moves 11 of 56 routes.** It RAISES both roads,
+  which is the predicted direction: a rupee buys less detour, so a toll road is relatively cheaper.
+- **B, ramp attribution, is worth exactly 0.0 km and moves 0 of 56 routes.** All 56 routes are
+  geometrically IDENTICAL with and without it. Every kilometre it appears to give EPE is a
+  kilometre already being driven and previously labelled `unpriced`. It is a reclassification, and
+  reporting it as a behavioural gain would have been false.
+- **C, the search proxy, is worth -28.8 km, all of it Yamuna.** It is the only one of the three that
+  pushes Yamuna DOWN; the other two push it up. That is the direct answer to whether Yamuna's fall
+  is correct: the road was free between barriers in the search, so 12.55 km of expressway cost
+  nothing, and it was being chosen because it was mispriced at zero.
+
+**THE THREE DO NOT COMPOSE, and that is the finding the totals hid.** On Yamuna the three separate
+effects sum to -17.9 km while turning all three off at once moves 69.1 km. The interaction term,
+-51.2 km, is larger than any single effect: at 225 rupees/hour a tolled kilometre on EPE costs 31.2
+seconds, so making Yamuna simultaneously free pushed traffic onto it far harder than either change
+does alone. **No single-cause account of the 130.7 to 61.6 fall is available, and one should not be
+written.**
+
+C's isolated figure is an UPPER BOUND on its own effect. The old proxy had two halves, no per-km
+cost between barriers and the whole barrier fee on the one edge carrying the booth, and only the
+first is expressible through the objective. The missing half was a cost of ENTERING a tolled road,
+so including it would push tolled kilometres further down.
+
+### A landmark pair that is longer and slower, and what pays for it
+
+`jewar to gaur-city` is 15.2% longer than OSRM and 6.7% slower by OSRM's own duration. Priced term
+by term under our objective with the same estimator on both lines, `npm run diagnose:pair`:
+
+```
+  term                     ours       OSRM        OSRM minus ours
+  drive                    68.55 min    70.90 min          2.35 min
+  distance, neutral        29.26 min    25.44 min         -3.81 min
+  distance, quality       -13.68 min   -10.07 min          3.61 min
+  toll                      4.04 min     4.04 min          0.00 min
+  turns                     0.94 min     1.59 min          0.65 min
+  TOTAL                    89.10 min    91.89 min          2.79 min
+```
+
+**"Slower" was never a like-for-like comparison.** Our modelled duration was being read against
+OSRM's modelled duration, which is a different speed table. Priced on OUR table, OSRM's shorter path
+takes 70.90 minutes against our 68.55: our route is 9.5 km longer and 2.35 minutes FASTER.
+
+**Quality carries it, it is decisive, and it is spent on one class.** Removing the quality weight
+flips the verdict: OSRM wins by 0.82 minutes with a flat rate and loses by 2.79 with the weighted
+one. The whole difference is trunk against secondary, 4.35 minutes of it:
+
+```
+  class          ours km   ours qual    OSRM km   OSRM qual     delta qual
+  motorway        26.93      -7.54      27.60      -7.73          -0.19
+  trunk           24.32      -5.35       4.55      -1.00           4.35
+  secondary       13.20      -0.79      22.42      -1.35          -0.55
+```
+
+Both paths take the identical 25.61 km of Yamuna Expressway. They differ afterwards: ours takes
+**21.10 km of the Noida-Greater Noida Expressway** and reaches it over about 10 km of named
+secondary connectors; OSRM takes **21.24 km of unnamed secondary** running direct. That is a stated
+preference doing exactly what it was built to do, and it is a judgement a local driver can overrule.
+Instrument self-error on this pair is 0.01 minutes, so the 2.79 minute margin is real.
+
+### OPEN: 13.07 km of the Yamuna Expressway carries no toll tag, and we cannot settle why
+
+Measured on the mainline (`highway=motorway`, name `Yamuna Expressway`) inside our clip:
+
+```
+  31.51 km  125 ways  toll=yes      lat 28.05296 .. 28.33864
+  13.07 km   42 ways  toll absent   lat 28.33860 .. 28.44798
+  CONTROL: 920 ways in the clip carry toll=yes, so the lookup works
+```
+
+**It is one CONTIGUOUS northern stretch, not a scatter.** `npm run audit:yamuna` prints the whole
+boundary; a latitude is not somewhere a person can stand, so the locatable form is recorded here.
+
+The two groups meet at **two nodes, one per carriageway**, about 20 m apart:
+
+| node | lat, lon | tagged way | untagged way |
+|---|---|---|---|
+| `1803899781` | 28.3385957, 77.5461706 | 169228550 | 87188879 |
+| `1803899782` | 28.3386406, 77.5463743 | 169228546 | 169624173 |
+
+The untagged stretch runs from there to node `1803900020` at **28.4479781, 77.4984506**, the
+northern terminus of the mainline in our data and NOT a clip edge: `BUILD_AREA` reaches 25.6 km
+further north. Bounding box **28.3385957, 77.4984306** to **28.4479781, 77.5463743**, 12.16 km
+north to south by 4.69 km east to west, 13.03 km end to end straight against 13.07 km measured
+along the carriageway.
+
+**Neither end has a named interchange, and that is a finding rather than a gap in the report.** The
+only ways meeting the mainline near either end are unnamed `motorway_link`s, and no named road
+reaches them through a slip road within 12 km. The nearest toll infrastructure is the ramp booth
+pair at 28.32113, 77.55136 and 28.31936, 77.55272, **2.01 and 2.23 km south of the boundary**; the
+next toll point after those is 22.09 km away and the Jewar mainline barrier is 25.11 km away.
+
+So the boundary sits just north of the last interchange that has booths on it. That is consistent
+with a genuinely free northern approach into Greater Noida. It is also exactly what a contiguous
+tagging gap would look like.
+
+It is not a rounding matter: `jewar to gaur-city` drives 25.61 km of the expressway and is billed
+for 12.55, and the 13.06 km difference is precisely this stretch.
+
+**Not treated as a defect and not corrected**, because correcting it means asserting a toll the data
+does not claim, and `hard-rules.md` forbids exactly that kind of inference. **One sentence from
+someone who drives it settles it**, and if the stretch is tolled the fix is a way-id list in
+`config/city.ts` and a rebuild.
+
+---
+
+## Gate 7: search, turn-by-turn, and the toll display. Built at gate 7.
+
+**Three features, one screen, and the one thing they share is that a view never decides anything.**
+All state and every decision live in `packages/client/src/store.ts`; components render and dispatch.
+That is what makes a later visual pass a change to markup and CSS, and it only holds if the
+decisions a view would be tempted to inline live somewhere else.
+
+### The latency readout is a designed element, and the switch beside it is the point
+
+The search index is the clearest place in the product where building everything ourselves pays, so
+the cost of it is shown rather than claimed. `searchUnindexed` runs the identical ranking with no
+precomputation, `/search?index=off` selects it, and the readout under the results reports the
+server's own measured search time.
+
+Warm, medians over five runs per query, through the same endpoint the UI uses, 7,675 places:
+
+```
+  query        indexed     no index
+  kasna        33.1 ms      62.3 ms      the fuzzy path, edit distance over the whole corpus
+  pari         10.4 ms      36.3 ms
+  gaur          9.0 ms      41.1 ms
+  alpha        14.2 ms      47.0 ms
+```
+
+**The two paths MUST rank identically or the demonstration is a lie**, trading answers for speed
+while appearing to trade nothing. `tests/engine/search.test.ts` asserts name, match type and score
+agree to six decimal places across ten queries with and without a map centre. The only permitted
+difference between the two paths is when the work happens.
+
+Cold, under keystroke contention, the readout was seen at 133 ms. That is real and it is what the
+user waited, so nothing suppresses it; the warm figures above are what the index is worth once the
+process has run.
+
+### Turn-by-turn: suppression is the hard half
+
+Instructions are derived in the engine from the same edge sequence and geometry that are returned,
+so an instruction can never name a road the drawn line does not run along. The generator reads four
+signals in order: roundabout, bearing change over a 30 m ground window, road-name change on BASE
+names, then road class.
+
+**Every rule below was written after a real route got it wrong**, and each is now pinned by a
+toy-graph test. The first pass produced 22 instructions for a 7.7 km urban route and 11 for a 73 km
+cross-district one, which is exactly backwards.
+
+| What went wrong | On what | The rule now |
+|---|---|---|
+| `turn slight left onto Noida-Greater Noida Expressway` while already on it | jewar to gaur-city, 20 km in | A bend under a slight turn on one continuously named road is never a manoeuvre, whatever the out-degree |
+| Nothing at all for joining the Yamuna Expressway | jewar to gaur-city, 12.9 km in | A merge is defined by the CLASS JUMP, with no name test: the slip road is unnamed and so is the road it leaves |
+| `merge onto (unnamed)` once the merge fired | the same junction | A manoeuvre is named from AHEAD of the junction, preferring a structure-free name |
+| `continue onto Vikas Marg` three times in 7 km | jewar to gaur-city | The decision and the label must use the SAME name; a repeat is dropped |
+| Five `keep left` / `keep right` in 2.5 km | Faridabad to Sikandarabad | An exit needs the class jump AND a name change, because rural trunk roads flip class along one carriageway |
+| Three right turns 20 to 40 m apart | alpha-1 to surajpur | Two turns the same way round within a corner's length are one corner |
+| `Continue onto NH34;NH334C` | Faridabad to Sikandarabad | A semicolon is OSM's multi-value encoding, not a name. Fixed in the pipeline, at the intern step |
+
+**A defect the toy graphs caught that no real route would have:** junction positions were located by
+comparing a haversine running total against a polyline measured with a local flat approximation.
+They agree to about half a percent, which is nothing over a route and everything at a corner. On a
+square left the index landed one shape point PAST the corner, the bearing was read from after the
+turn to further after it, delta came out 0, and a 90 degree turn was never announced. Junction
+positions are now nearest-matched along the line.
+
+Result on the two routes that drove the work, re-measured through the server after the last fix
+rather than quoted from the run that motivated it: **73.14 km, 209 edges, 12 instructions**, and
+**7.72 km, 64 edges, 17 instructions**.
+
+**Not verified against local knowledge yet, and flagged rather than assumed.** Roundabout exit
+counting is the weakest part: it counts circle vertices that offer any way out, which a divided
+exit mapped as two ways would double. `alpha-1 to surajpur` reports exits 4, 2, 1 and 2 through
+four roundabouts in 7.72 km. Those numbers need someone who drives them.
+
+### Three toll tiers, and the difference is visible before the words are read
+
+`Route.tollDisplay` is derived once by `tollDisplayOf` in `packages/shared/toll.ts`. The client
+recomputes it from the fields that travelled with it and compares; a disagreement resolves DOWNWARD
+to `estimated` and warns. An estimate shown as a fact is indistinguishable from a fact.
+
+| Tier | Rendered | Seen on |
+|---|---|---|
+| `exact` | the figure alone, body size, full ink | Faridabad to Sikandarabad, 79.4 km, `Rs 125` |
+| `estimated` | `Tolls` then `Estimated cost: Rs X`, caption size, quiet | Jewar to Gaur City, 73.7 km, `Rs 68`, Yamuna ramps |
+| `none` | nothing at all | any toll-free route |
+
+This is deliberately unlike the mainstream tools, which show one estimate for everything and never
+say which figures they stand behind.
+
+### Pre-ship checklist, measured
+
+```
+type sizes on the surface     3 (caption .75, body 1, display 1.25rem) + html 100%   cap 5
+type weights                  2 (400, 600)                                           cap 3
+px font sizes                 0
+copy gate                     PASS
+horizontal scroll at 320px    none. window.innerWidth asserted 320 under device emulation, not resize
+200% text at 320px            no scroll, input 238px, rail right edge 296 of 320
+collisions at 320px           status chip vs attribution and vs zoom controls, both resolved and
+                              re-measured by getBoundingClientRect, not by eye
+accent                        one, and the status chip lost its bar so the route panel owns it
+pressed state                 inverts elevation to inset
+reduced motion                honoured, durations collapsed
+```
+
+**Not run: `verify:browser` and `acceptance`.** Neither is built; they are gates 8 and 9.
+
+---
+
 ## The toll price: derived from the tariff. Rebuilt at gate 4, after the first one was a placeholder.
 
 > **SUPERSEDED at gate 6** by the section above. The uniform 2.65 rupees/km recorded here was never

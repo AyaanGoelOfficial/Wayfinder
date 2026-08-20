@@ -16,7 +16,14 @@
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+
+    "baseUrl": "../..",
+    "paths": {
+      "@config/*": ["config/*"],
+      "@wayfinder/shared": ["packages/shared/index.ts"],
+      "@wayfinder/shared/*": ["packages/shared/*"]
+    }
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "vite.config.ts", "../shared/**/*.ts", "../../config/**/*.ts"]
 }

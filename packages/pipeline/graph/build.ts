@@ -14,7 +14,7 @@
 import { haversineM } from '../../shared/geo.ts';
 import { attributeTollRamps, classifyWay, tollGateKindOf, tollRoadOf } from './profile.ts';
 import { computeEpeChainage, epeSegmentOf } from './epe.ts';
-import { EPE_SEGMENT_NONE } from '../../shared/graphfile.ts';
+import { EPE_SEGMENT_NONE, NAME_NONE } from '../../shared/graphfile.ts';
 import { TOLL_ROADS } from '../../../config/city.ts';
 import type { Clipped } from '../clip/clip.ts';
 
@@ -93,6 +93,29 @@ export interface Graph {
    */
   readonly edgeTollSegment: Uint8Array;
 
+  /**
+   * Index into `roadNames`, or `NAME_NONE` when the way has no usable name.
+   *
+   * INTERNED, not stored per edge, because names repeat enormously: one arterial is hundreds of
+   * edges carrying one string. Stored at all because turn-by-turn cannot be derived without it and
+   * a name is a FACT about the road, so it belongs here rather than being fetched separately and
+   * risking a second copy that disagrees.
+   */
+  readonly edgeNameId: Int32Array;
+
+  /**
+   * 1 when the underlying way is `junction=roundabout` or `junction=circular`.
+   *
+   * Needed because "take the third exit" is a statement about the circle, not about any one turn:
+   * the exit has to be COUNTED while traversing, and nothing else in the artifact identifies which
+   * edges form the circle. The same tag already implies a one-way in `classifyWay`, so this stores
+   * a fact the build has and the engine otherwise cannot recover.
+   */
+  readonly edgeRoundabout: Uint8Array;
+
+  /** The interned name table. `edgeNameId` indexes it. */
+  readonly roadNames: readonly string[];
+
   /** Packed shape points, scaled by 1e7. Shape s spans shapeOffset[s]..shapeOffset[s+1]. */
   readonly shapeOffset: Int32Array;
   readonly shapeLat: Int32Array;
@@ -140,8 +163,37 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
     readonly forward: boolean;
     readonly backward: boolean;
     readonly isPrivate: boolean;
+    readonly nameId: number;
+    readonly roundabout: boolean;
   }
   const kept: Kept[] = [];
+
+  /**
+   * The name intern table, built as ways are kept.
+   *
+   * `name` first, then `ref`. A driver is told "turn onto Vikas Marg" if the road has a name and
+   * "join NH334DD" if all it has is a number, and a numbered road with no name is common here. An
+   * empty string is not a name and never enters the table, or unnamed edges would all share index 0
+   * and read as a road actually called "".
+   */
+  const roadNames: string[] = [];
+  const nameIdOf = new Map<string, number>();
+  const internName = (tags: ReadonlyMap<string, string>): number => {
+    const raw = tags.get('name') ?? tags.get('ref') ?? '';
+    // OSM joins multiple values with a semicolon, so a road carrying two national numbers is tagged
+    // `NH34;NH334C`. That is a data encoding, not a name, and it reached the turn-by-turn list as
+    // "Continue onto NH34;NH334C". Only two names in the whole table carry it, which is exactly why
+    // it would have survived review: it is rare enough to miss and user-facing when it appears.
+    // The first value is what a sign leads with.
+    const n = (raw.split(';')[0] ?? '').trim();
+    if (n === '') return NAME_NONE;
+    const seen = nameIdOf.get(n);
+    if (seen !== undefined) return seen;
+    const id = roadNames.length;
+    roadNames.push(n);
+    nameIdOf.set(n, id);
+    return id;
+  };
 
   let waysSkippedNotDrivable = 0;
   let waysSkippedTooShort = 0;
@@ -199,6 +251,8 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
       forward: cls.forward,
       backward: cls.backward,
       isPrivate: cls.access === 'private',
+      nameId: internName(way.tags),
+      roundabout: cls.roundabout,
     });
 
     // Endpoints are always vertices. Interior nodes become vertices when a second way uses
@@ -282,6 +336,8 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
   const edgeTollRoad: number[] = [];
   const edgeTollGate: number[] = [];
   const edgeTollSegment: number[] = [];
+  const edgeNameId: number[] = [];
+  const edgeRoundabout: number[] = [];
 
   const shapeOffset: number[] = [0];
   const shapeLat: number[] = [];
@@ -360,6 +416,8 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
           edgeTollRoad.push(k.tollRoad);
           edgeTollGate.push(gate);
           edgeTollSegment.push(segment);
+          edgeNameId.push(k.nameId);
+          edgeRoundabout.push(k.roundabout ? 1 : 0);
         }
         if (k.backward) {
           edgeFrom.push(b); edgeTo.push(a); edgeLengthM.push(len);
@@ -371,6 +429,8 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
           edgeTollRoad.push(k.tollRoad);
           edgeTollGate.push(gate);
           edgeTollSegment.push(segment);
+          edgeNameId.push(k.nameId);
+          edgeRoundabout.push(k.roundabout ? 1 : 0);
         }
         if (k.forward !== k.backward) onewayEdges++;
       }
@@ -442,6 +502,8 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
   const fTollRoad: number[] = [];
   const fTollGate: number[] = [];
   const fTollSegment: number[] = [];
+  const fNameId: number[] = [];
+  const fRoundabout: number[] = [];
   let keptLengthM = 0;
   for (let e = 0; e < edgeFrom.length; e++) {
     const a = newVertexOf[edgeFrom[e] as number] as number;
@@ -459,6 +521,8 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
     fTollRoad.push(edgeTollRoad[e] as number);
     fTollGate.push(edgeTollGate[e] as number);
     fTollSegment.push(edgeTollSegment[e] as number);
+    fNameId.push(edgeNameId[e] as number);
+    fRoundabout.push(edgeRoundabout[e] as number);
     keptLengthM += edgeLengthM[e] as number;
   }
 
@@ -517,6 +581,9 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
     edgeTollRoad: new Uint8Array(fTollRoad),
     edgeTollGate: new Uint8Array(fTollGate),
     edgeTollSegment: new Uint8Array(fTollSegment),
+    edgeNameId: new Int32Array(fNameId),
+    edgeRoundabout: new Uint8Array(fRoundabout),
+    roadNames,
     shapeOffset: new Int32Array(shapeOffset),
     shapeLat: new Int32Array(shapeLat),
     shapeLon: new Int32Array(shapeLon),

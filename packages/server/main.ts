@@ -18,16 +18,28 @@ import { createReadStream } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { ROUTES } from '../shared/index.ts';
-import type { ApiError, LngLat, RouteResponse } from '../shared/index.ts';
+import type { ApiError, LngLat, Place, RouteResponse, SearchResponse } from '../shared/index.ts';
 import { SnapIndex } from '../engine/snap.ts';
 import { Router } from '../engine/dijkstra.ts';
 import { parseGraphArtifact } from '../engine/graphfile.ts';
+import { buildInstructions } from '../engine/instructions.ts';
+import { PlacesSearch } from '../engine/search.ts';
 import { BUILD_AREA, OBJECTIVE, SNAP_DESTINATION_M, TURN_COST } from '../../config/city.ts';
 
 const DATA = resolve(import.meta.dirname, '../../data');
 const PMTILES = resolve(DATA, 'wayfinder-gn.pmtiles');
 const GRAPH_BIN = resolve(DATA, 'graph.bin');
+const PLACES_JSON = resolve(DATA, 'places.json');
 const STYLE_JSON = resolve(DATA, 'style.json');
+
+/**
+ * Hard cap on what one search request may return.
+ *
+ * The client asks for what it will draw. This exists so a hand-crafted `limit=100000` cannot make
+ * the server sort and serialise the whole index per keystroke; `packages/server/CLAUDE.md` treats
+ * every client parameter as untrusted, and a number is untrusted in exactly this way.
+ */
+const SEARCH_LIMIT_MAX = 25;
 const PORT = Number(process.env['PORT'] ?? 8080);
 const HOST = process.env['HOST'] ?? '0.0.0.0';
 
@@ -55,6 +67,9 @@ app.get(ROUTES.health, async () => {
   return {
     ok: pmtilesBytes > 0,
     buildArea: BUILD_AREA,
+    // Reported rather than hardcoded anywhere else. The search UI states the corpus size to the
+    // user, and a figure typed into a component is wrong the next time the city is rebuilt.
+    places: places.size,
     artifacts: { pmtilesBytes },
   };
 });
@@ -206,6 +221,32 @@ console.log(
     `loaded in ${((performance.now() - tLoad) / 1000).toFixed(2)}s`,
 );
 
+/**
+ * The places index, memory-loaded at boot exactly like the graph.
+ *
+ * Loud on failure rather than degrading to an empty index: a search box that returns nothing looks
+ * identical whether the data is missing or the query genuinely matched nothing, and only one of
+ * those is the operator's problem.
+ */
+console.log('loading places...');
+const tPlaces = performance.now();
+let places: PlacesSearch;
+try {
+  const raw = JSON.parse(await readFile(PLACES_JSON, 'utf-8')) as { places?: Place[] } | Place[];
+  const list = Array.isArray(raw) ? raw : (raw.places ?? []);
+  if (list.length === 0) throw new Error('places index parsed but contains no entries');
+  places = new PlacesSearch(list);
+} catch (err) {
+  console.error(`MISSING OR UNREADABLE ARTIFACT: ${PLACES_JSON}`);
+  console.error(err instanceof Error ? err.message : String(err));
+  console.error('Run `npm run build-city` first.');
+  process.exit(1);
+}
+console.log(
+  `places: ${places.size.toLocaleString('en-US')} entries, ` +
+    `loaded in ${((performance.now() - tPlaces) / 1000).toFixed(2)}s`,
+);
+
 /** Monotonic per process. The client discards anything that is not the latest. Charter item 6. */
 let routeId = 0;
 
@@ -285,13 +326,65 @@ app.get<{ Querystring: { from?: string; to?: string } }>(ROUTES.route, async (re
       // which roads it touched, so deriving the display tier again here would be a second opinion.
       tollDisplay: r.tollDisplay,
       tollMetres: r.tollMetres,
-      // Turn-by-turn instructions are gate 7. Empty is honest; a fabricated list is not.
-      instructions: [],
+      // Derived in the engine from the SAME edge sequence and geometry that are being returned, so
+      // an instruction can never name a road the drawn line does not run along.
+      instructions: buildInstructions({
+        graph: artifact.graph,
+        roadNames: artifact.roadNames,
+        edges: r.edges,
+        geometry: r.geometry,
+      }),
       profile: 'driving',
     },
     timingMs: {
       snap: Number(snapMs.toFixed(2)),
       route: Number(routeMs.toFixed(2)),
+      total: Number((performance.now() - t0).toFixed(2)),
+    },
+  };
+  return reply.header('cache-control', 'no-store').send(body);
+});
+
+/**
+ * Search as you type. One request per keystroke, so the budget is the keystroke, not the page.
+ *
+ * `near` is optional and is the map centre, not a location fix. It only breaks ties: the ranking
+ * rules live in `engine/search.ts`, and nothing here may re-rank, because a second opinion about
+ * relevance is how the fixtures start passing in the gate and failing in the product.
+ */
+app.get<{ Querystring: { q?: string; near?: string; limit?: string; index?: string } }>(ROUTES.search, async (req, reply) => {
+  const t0 = performance.now();
+  const q = typeof req.query.q === 'string' ? req.query.q : '';
+  if (q.trim() === '') {
+    // Not an error. An empty box is the resting state of a search field, and answering it with a
+    // 400 would make the client special-case the most common state it is ever in.
+    const empty: SearchResponse = { hits: [], timingMs: { search: 0, total: 0 } };
+    return reply.header('cache-control', 'no-store').send(empty);
+  }
+
+  const rawLimit = Number(req.query.limit ?? 8);
+  const limit = Number.isFinite(rawLimit) ? Math.min(SEARCH_LIMIT_MAX, Math.max(1, Math.trunc(rawLimit))) : 8;
+
+  let near: LngLat | undefined;
+  if (typeof req.query.near === 'string') {
+    const parsed = parsePoint(req.query.near, 'map centre');
+    // A bad `near` degrades to no bias rather than failing the search. The parameter is a hint;
+    // refusing to search because a hint was malformed would be the wrong trade for the user.
+    if (!('code' in parsed)) near = parsed;
+  }
+
+  // `index=off` runs the same ranking with no precomputation. It exists so the cost of the index
+  // can be WATCHED rather than asserted, over the real corpus, and it is off by default.
+  const indexed = req.query.index !== 'off';
+  const opts = near === undefined ? { limit } : { limit, near };
+  const tSearch = performance.now();
+  const hits = indexed ? places.search(q, opts) : places.searchUnindexed(q, opts);
+  const searchMs = performance.now() - tSearch;
+
+  const body: SearchResponse = {
+    hits,
+    timingMs: {
+      search: Number(searchMs.toFixed(2)),
       total: Number((performance.now() - t0).toFixed(2)),
     },
   };
@@ -311,5 +404,7 @@ try {
 await app.listen({ port: PORT, host: HOST });
 console.log(`wayfinder-gn server on http://localhost:${PORT}`);
 console.log(`  ${ROUTES.health}   health and artifact status`);
+console.log(`  ${ROUTES.route}    from=lon,lat to=lon,lat`);
+console.log(`  ${ROUTES.search}   q=text, optional near=lon,lat and limit`);
 console.log(`  /style.json  MapLibre style`);
 console.log(`  /tiles/wayfinder-gn.pmtiles  archive, byte ranges honoured`);

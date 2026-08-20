@@ -71,10 +71,334 @@ body {
   inset: 0;
 }
 
-.status {
+/*
+ * The left rail. One column, every piece of chrome in it, so the map keeps the rest of the screen.
+ *
+ * Width is bounded rather than full-bleed: ui.md says content occupies a fraction of its frame, and
+ * a panel spanning the viewport would read as a document with a map behind it. `min()` is what
+ * keeps that true at 320px, where a fixed 21rem would overflow and scroll the page sideways.
+ */
+.rail {
   position: absolute;
   top: calc(var(--space-unit) / 2);
   left: calc(var(--space-unit) / 2);
+  inline-size: min(21rem, calc(100vw - var(--space-unit)));
+  /* Never taller than the viewport minus its gutters, so a long instruction list scrolls inside
+     the rail instead of pushing the page. */
+  max-block-size: calc(100vh - var(--space-unit));
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) / 2);
+  min-inline-size: 0;
+  overflow-y: auto;
+  /* The rail is a container for floating cards, not a surface itself. Clicks between the cards
+     belong to the map underneath. */
+  pointer-events: none;
+}
+
+.rail > * {
+  pointer-events: auto;
+}
+
+.search,
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  /* Layered elevation, light from top-left: a tight contact shadow plus a wide ambient one, both
+     tinted toward the surface beneath rather than toward black. */
+  box-shadow:
+    0 1px 2px rgba(61, 55, 46, 0.08),
+    0 6px 16px rgba(61, 55, 46, 0.06);
+  min-inline-size: 0;
+}
+
+.search {
+  padding: calc(var(--space-unit) / 3);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) / 4);
+}
+
+.search-field {
+  display: block;
+  min-inline-size: 0;
+}
+
+/*
+ * `inline-size: 100%` and `min-inline-size: 0` are BOTH required, and the failure catalogue in
+ * ui.md names why: an <input> carries a UA intrinsic width from its default size=20, measured in
+ * CHARACTERS, so it scales with font-size and ignores the viewport. It fits at 100% and scrolls
+ * the page sideways at 200% zoom.
+ */
+.search-input {
+  inline-size: 100%;
+  min-inline-size: 0;
+  padding: calc(var(--space-unit) / 3) calc(var(--space-unit) / 2.5);
+  font-family: inherit;
+  font-size: var(--text-body);
+  color: var(--ink);
+  background: var(--surface-sunk);
+  border: 1px solid var(--hairline);
+  /* Concentric with the card: inner = outer minus the padding between them. */
+  border-radius: calc(var(--radius) - 0.125rem);
+  transition: border-color 180ms ease, background-color 180ms ease;
+}
+
+.search-input::placeholder {
+  color: var(--ink-quiet);
+}
+
+.search-input:hover {
+  border-color: var(--ink-quiet);
+}
+
+.search-input:focus {
+  outline: none;
+  background: var(--surface);
+  border-color: var(--accent);
+}
+
+.search-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.result {
+  inline-size: 100%;
+  min-inline-size: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  padding: calc(var(--space-unit) / 4) calc(var(--space-unit) / 3);
+  text-align: start;
+  font-family: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: calc(var(--radius) - 0.125rem);
+  cursor: pointer;
+  transition: background-color 150ms ease;
+  animation: rise 320ms ease backwards;
+}
+
+/* `backwards`, never `both`: a filled animation's final keyframe outranks normal declarations and
+   would permanently kill the hover background. Named in the ui.md failure catalogue. */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(0.375rem);
+  }
+}
+
+.result:hover {
+  background: var(--surface-sunk);
+}
+
+.result:active {
+  background: var(--hairline);
+}
+
+.result-name {
+  font-size: var(--text-body);
+  font-weight: var(--weight-label);
+  color: var(--ink);
+  /* A long Devanagari or compound road name must not widen the rail. */
+  overflow-wrap: anywhere;
+}
+
+.result-meta {
+  font-size: var(--text-caption);
+  color: var(--ink-quiet);
+}
+
+.results-empty {
+  margin: 0;
+  padding: calc(var(--space-unit) / 4) calc(var(--space-unit) / 3);
+  font-size: var(--text-caption);
+  color: var(--ink-quiet);
+}
+
+/*
+ * The latency readout. Caption type, quiet colour, under everything: it informs, it does not
+ * compete. Tabular figures because the number updates in place and would otherwise jitter.
+ */
+.latency {
+  margin: 0;
+  padding-inline: calc(var(--space-unit) / 3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--space-unit) / 4);
+  font-size: var(--text-caption);
+  color: var(--ink-quiet);
+  font-variant-numeric: tabular-nums;
+  border-top: 1px solid var(--hairline);
+  padding-block-start: calc(var(--space-unit) / 4);
+}
+
+.latency-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  cursor: pointer;
+}
+
+.latency-switch input {
+  accent-color: var(--accent);
+  margin: 0;
+}
+
+.latency-figure {
+  text-align: end;
+}
+
+/* ---- the route panel ---- */
+
+.panel {
+  padding: calc(var(--space-unit) / 3);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) / 4);
+  border-left: 4px solid var(--accent);
+}
+
+.panel[data-state="error"] {
+  /* Semantic state pairs colour with a second channel, the thicker bar, so it survives greyscale. */
+  border-left-color: #c2410c;
+}
+
+.panel-title {
+  margin: 0;
+  font-size: var(--text-display);
+  font-weight: var(--weight-label);
+  line-height: 1.2;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.panel-note {
+  margin: 0;
+  font-size: var(--text-caption);
+  color: var(--ink-quiet);
+  overflow-wrap: anywhere;
+}
+
+/*
+ * The two toll tiers. The difference is deliberately visible: an exact fare is stated at body size
+ * in full ink, an estimate is captioned and quiet. A reader should be able to tell which kind of
+ * number they are looking at without reading the words.
+ */
+.toll {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.toll[data-tier="exact"] .toll-amount {
+  font-size: var(--text-body);
+  font-weight: var(--weight-label);
+  color: var(--ink);
+}
+
+.toll-label {
+  font-size: var(--text-caption);
+  font-weight: var(--weight-label);
+  color: var(--ink);
+}
+
+.toll[data-tier="estimated"] .toll-amount {
+  font-size: var(--text-caption);
+  color: var(--ink-quiet);
+}
+
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.step {
+  display: grid;
+  grid-template-columns: 1.25rem 1fr auto;
+  align-items: baseline;
+  gap: calc(var(--space-unit) / 4);
+  padding-block: calc(var(--space-unit) / 6);
+  border-top: 1px solid var(--hairline);
+  font-size: var(--text-caption);
+}
+
+.step:first-child {
+  border-top: 0;
+}
+
+.step-glyph {
+  color: var(--accent);
+  text-align: center;
+}
+
+.step-text {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.step-distance {
+  color: var(--ink-quiet);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.panel-action {
+  align-self: flex-start;
+  padding: calc(var(--space-unit) / 6) calc(var(--space-unit) / 3);
+  font-family: inherit;
+  font-size: var(--text-caption);
+  font-weight: var(--weight-label);
+  color: var(--ink);
+  background: var(--surface-sunk);
+  border: 1px solid var(--hairline);
+  border-radius: calc(var(--radius) - 0.125rem);
+  cursor: pointer;
+  transition: background-color 150ms ease, box-shadow 150ms ease;
+}
+
+.panel-action:hover {
+  background: var(--hairline);
+}
+
+/* The pressed state INVERTS the elevation, per ui.md, or the press has no physical logic. */
+.panel-action:active {
+  box-shadow: inset 0 1px 2px rgba(61, 55, 46, 0.18);
+}
+
+/* Available to a screen reader, absent from the layout. Used for the search field's real label. */
+.visually-hidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.status {
+  position: absolute;
+  top: calc(var(--space-unit) / 2);
+  /* Moved right at gate 7: the top-left corner belongs to the search field now. */
+  right: calc(var(--space-unit) / 2);
   /* Never wider than the viewport minus its own gutters, so 320px cannot overflow. */
   max-inline-size: calc(100vw - var(--space-unit));
   min-inline-size: 0;
@@ -107,13 +431,50 @@ body {
   border-left-width: 4px;
 }
 
+/*
+ * NO ACCENT BAR HERE from gate 7 onward. ui.md: one accent, at full strength, ONCE. The route line
+ * and the route panel are what the accent is for, and the status chip carrying the same bar made
+ * three blue marks compete on one screen for attention the readout does not deserve. The chip keeps
+ * its own hairline; only the error state still earns a coloured edge, because that is a semantic
+ * state rather than emphasis.
+ */
 .status[data-state="ready"] {
-  border-left: 4px solid var(--accent);
+  border-left: 1px solid var(--hairline);
 }
 
 :where(a, button, [tabindex]):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/*
+ * Narrow viewports. The rail and the status chip both want the top of the screen and there is no
+ * longer room for two things there, so the readout moves to the bottom rather than being hidden:
+ * ui.md's failure catalogue is about layouts that collide, and deleting the collision is not the
+ * same as resolving it.
+ *
+ * Verified with device emulation, never window resize. The browser window has a width floor around
+ * 502 CSS px, so a resize-based check of this breakpoint silently passes without engaging it.
+ */
+@media (max-width: 30rem) {
+  .rail {
+    inline-size: calc(100vw - var(--space-unit));
+    max-block-size: calc(100vh - 5.5rem);
+  }
+
+  /*
+   * The readout sits ABOVE MapLibre's attribution and stops short of its zoom controls, rather
+   * than spanning the full width and landing under both. Measured, not eyeballed: at 320 the
+   * attribution container occupies the bottom 44px on the left and the control stack about 2.75rem
+   * on the right, so those are the two clearances. 3rem is 48px, measured against the 44px box.
+   */
+  .status {
+    top: auto;
+    bottom: 3rem;
+    right: auto;
+    left: calc(var(--space-unit) / 2);
+    max-inline-size: calc(100vw - var(--space-unit) - 2.75rem);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

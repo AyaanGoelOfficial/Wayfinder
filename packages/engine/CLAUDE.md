@@ -64,4 +64,35 @@ which is what lets the whole ladder be tested against hand-built toy graphs.
 - **`noUncheckedIndexedAccess` is on repo-wide.** If it becomes genuinely unworkable in a
   CSR hot loop, override it in a tsconfig for this package with the reason written here
   first. Do not scatter non-null assertions to silence it.
+- **AN INSTRUCTION IS ONLY EMITTED FOR A MANOEUVRE THE DRIVER ACTUALLY MAKES.** A vertex exists
+  wherever two ways meet, so a route driving straight through a crossroads produces an edge change
+  with no turn in it, and a road that bends through a junction produces a real angle with no
+  decision in it. Suppression is the hard half of `instructions.ts`, not detection: without it a
+  73 km route grows an instruction per junction and stops being read at all. Every suppression rule
+  is pinned by a toy-graph test that asserts NOTHING is emitted.
+- **A BEND IS NOT A TURN, and a fork onto the road you are already on is not a fork.** Under a
+  slight turn on a continuously named road, no manoeuvre is emitted whatever the out-degree. The
+  measured case: "turn slight left onto Noida-Greater Noida Expressway" 20 km into a route already
+  on it, then "keep right onto Bendy Road" once the out-degree escape was added.
+- **A MERGE IS DEFINED BY THE CLASS JUMP, AN EXIT BY THE CLASS JUMP PLUS A NAME CHANGE, and the
+  asymmetry is the data.** Slip roads onto an expressway are unnamed, so requiring a name change on
+  the merge suppressed the single most important instruction on a 73 km route. Rural trunk roads
+  flip between trunk and unclassified along one carriageway, so NOT requiring one on the exit fired
+  five times in 2.5 km.
+- **A MANOEUVRE IS NAMED FROM AHEAD OF THE JUNCTION, never from the edge at it.** The edge after a
+  junction is usually the slip road and slip roads here are unnamed, which produced "merge onto
+  (unnamed)" onto the Yamuna Expressway. `nameAhead` also prefers a structure-free name, so a driver
+  is told "Vikas Marg" and not "Vikas Marg Underpass".
+- **THE DECISION AND THE LABEL MUST USE THE SAME NAME.** They did not, and the result was "continue
+  onto Vikas Marg" three times in 7 km: the decision compared raw way names, which really did
+  change, while the label resolved back to the same road each time.
+- **JUNCTION POSITIONS ARE NEAREST-MATCHED ALONG THE LINE, never first-past-the-target.**
+  `edgeLengthM` is haversine from the pipeline and the instruction builder measures the polyline
+  with a local flat approximation. They agree to about half a percent, which is nothing over a route
+  and everything at a corner: the index landed one shape point past a square left, the bearing was
+  read from after the turn to further after it, and a 90 degree turn was never announced.
+- **`searchUnindexed` IS NOT DEAD CODE.** It is the same ranking with no precomputation, kept
+  runnable so the index's value is measured in the product rather than asserted. It MUST return the
+  identical ranking to `search`, and `tests/engine/search.test.ts` enforces that rather than trusting
+  the comment.
 - **Imports:** `config/`, `shared/`. Nothing else. No Node built-ins.

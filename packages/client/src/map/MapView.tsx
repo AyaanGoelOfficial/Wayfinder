@@ -14,6 +14,7 @@ import { AttributionControl, Map as MapLibreMap, NavigationControl, addProtocol 
 import type { MapOptions } from 'maplibre-gl';
 import { Protocol } from 'pmtiles';
 import { ROUTE_LAYERS } from './routeLayers.ts';
+import { useStore } from '../store.ts';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
 type StyleSpec = Exclude<MapOptions['style'], string | undefined>;
@@ -84,6 +85,8 @@ export function MapView({
 
     let cancelled = false;
     let map: MapLibreMap | null = null;
+    /** Store subscriptions, torn down with the map. A leaked one repaints a removed map. */
+    const unsubscribers: (() => void)[] = [];
 
     const start = async (): Promise<void> => {
       let style: StyleSpec;
@@ -128,6 +131,9 @@ export function MapView({
       const report = (): void => {
         const c = m.getCenter();
         onStatus({ kind: 'ready', zoom: m.getZoom(), center: [c.lng, c.lat] });
+        // Fed to the store so search ranking can bias toward what is on screen. A hint only: the
+        // ranking rules are the engine's, and nothing here re-ranks.
+        useStore.getState().setCentre([c.lng, c.lat]);
       };
       // DEV ONLY. Exposes the map for the browser gates, which need querySourceFeatures and
       // queryRenderedFeatures to tell "the tile has no feature" apart from "the layer did not
@@ -179,9 +185,70 @@ export function MapView({
         });
       };
 
+      /**
+       * Draws whatever route the store currently holds, and clears the line when it holds none.
+       *
+       * Subscribed rather than polled, and keyed on `route.id`, which is the monotonic id the
+       * server stamps for exactly this purpose. Redrawing the same line on every unrelated store
+       * change would refit the camera while the user is panning.
+       */
+      let drawnId = -1;
+      const paint = (): void => {
+        const r = useStore.getState().route;
+        const src = m.getSource('route') as unknown as { setData: (d: unknown) => void } | undefined;
+        if (r === null) {
+          drawnId = -1;
+          if (src !== undefined) src.setData({ type: 'FeatureCollection', features: [] });
+          return;
+        }
+        if (r.id === drawnId) return;
+        drawnId = r.id;
+        const line = {
+          type: 'FeatureCollection' as const,
+          features: [
+            {
+              type: 'Feature' as const,
+              properties: {},
+              geometry: { type: 'LineString' as const, coordinates: r.geometry as [number, number][] },
+            },
+          ],
+        };
+        if (src === undefined) {
+          m.addSource('route', { type: 'geojson', data: line });
+          m.addLayer({ ...ROUTE_LAYERS.casing, source: 'route' } as never);
+          m.addLayer({ ...ROUTE_LAYERS.line, source: 'route' } as never);
+        } else {
+          src.setData(line);
+        }
+        let minLon = Infinity;
+        let minLat = Infinity;
+        let maxLon = -Infinity;
+        let maxLat = -Infinity;
+        for (const [lon, lat] of r.geometry) {
+          if (lon < minLon) minLon = lon;
+          if (lat < minLat) minLat = lat;
+          if (lon > maxLon) maxLon = lon;
+          if (lat > maxLat) maxLat = lat;
+        }
+        if (Number.isFinite(minLon)) {
+          // Padded generously on the left, where the search and route panel sit, so the line is
+          // never fitted underneath the chrome that describes it.
+          m.fitBounds(
+            [
+              [minLon, minLat],
+              [maxLon, maxLat],
+            ],
+            { padding: { top: 60, bottom: 60, left: 380, right: 60 }, duration: 600 },
+          );
+        }
+      };
+      const unsubscribe = useStore.subscribe(paint);
+      unsubscribers.push(unsubscribe);
+
       m.on('load', () => {
         report();
         void drawRoute();
+        paint();
       });
       m.on('moveend', report);
       m.on('error', (e) => {
@@ -194,6 +261,7 @@ export function MapView({
 
     return () => {
       cancelled = true;
+      for (const off of unsubscribers) off();
       map?.remove();
     };
   }, [onStatus, onRoute]);

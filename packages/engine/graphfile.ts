@@ -32,7 +32,14 @@ export interface LoadedArtifact {
     readonly edgeTollRoad: Uint8Array;
     readonly edgeTollGate: Uint8Array;
     readonly edgeTollSegment: Uint8Array;
+    readonly edgeNameId: Int32Array;
+    readonly edgeRoundabout: Uint8Array;
   };
+  /**
+   * The interned road name table, indexed by `edgeNameId`. NOT part of `RoutableGraph`: the search
+   * never reads a string, and putting it there would invite one into the hot loop.
+   */
+  readonly roadNames: readonly string[];
   readonly restrictions: Restrictions & {
     readonly banned: ReadonlyMap<number, ReadonlySet<number>>;
     readonly bannedSequences: ReadonlyMap<number, readonly { fromEdge: number; toEdge: number }[]>;
@@ -66,18 +73,21 @@ export function parseGraphArtifact(bytes: Uint8Array): LoadedArtifact {
   const P = head.getUint32(20, true);
   const statsLen = head.getUint32(24, true);
   const turnsLen = head.getUint32(28, true);
+  const namesLen = head.getUint32(32, true);
 
   const dec = new TextDecoder('utf-8');
   const base = bytes.byteOffset;
   const statsAt = GRAPH_HEADER_BYTES;
   const turnsAt = statsAt + statsLen;
+  const namesAt = turnsAt + turnsLen;
   const stats = JSON.parse(dec.decode(bytes.subarray(statsAt, turnsAt))) as LoadedArtifact['stats'];
-  const turns = JSON.parse(dec.decode(bytes.subarray(turnsAt, turnsAt + turnsLen))) as SerializedTurns;
+  const turns = JSON.parse(dec.decode(bytes.subarray(turnsAt, namesAt))) as SerializedTurns;
+  const roadNames = JSON.parse(dec.decode(bytes.subarray(namesAt, namesAt + namesLen))) as string[];
 
-  const f64Start = base + alignUp(GRAPH_HEADER_BYTES + statsLen + turnsLen, 8);
+  const f64Start = base + alignUp(GRAPH_HEADER_BYTES + statsLen + turnsLen + namesLen, 8);
   const f64Count = V * 3 + E * 2;
   const i32Start = f64Start + f64Count * 8;
-  const i32Count = V + 1 + E * 4 + (S + 1) + P * 2;
+  const i32Count = V + 1 + E * 5 + (S + 1) + P * 2;
   const u8Start = i32Start + i32Count * 4;
   const expected = u8Start - base + E * U8_SECTIONS_PER_EDGE;
   if (bytes.byteLength < expected) {
@@ -110,6 +120,7 @@ export function parseGraphArtifact(bytes: Uint8Array): LoadedArtifact {
   const edgeFrom = takeI(E);
   const edgeTo = takeI(E);
   const edgeShape = takeI(E);
+  const edgeNameId = takeI(E);
   const shapeOffset = takeI(S + 1);
   const shapeLat = takeI(P);
   const shapeLon = takeI(P);
@@ -123,6 +134,7 @@ export function parseGraphArtifact(bytes: Uint8Array): LoadedArtifact {
   const edgeTollRoad = new Uint8Array(bytes.buffer, u8Start + E * 6, E);
   const edgeTollGate = new Uint8Array(bytes.buffer, u8Start + E * 7, E);
   const edgeTollSegment = new Uint8Array(bytes.buffer, u8Start + E * 8, E);
+  const edgeRoundabout = new Uint8Array(bytes.buffer, u8Start + E * 9, E);
 
   const banned = new Map<number, ReadonlySet<number>>();
   for (const [via, tos] of turns.banned) banned.set(via, new Set(tos));
@@ -135,8 +147,10 @@ export function parseGraphArtifact(bytes: Uint8Array): LoadedArtifact {
       csrOffset, csrEdge,
       edgeFrom, edgeTo, edgeLengthM, edgeSpeedKmh, edgeWayId, edgeShape, edgeReversed, edgePrivate,
       edgeClassRank, edgeToll, edgeTollRoad, edgeTollGate, edgeTollSegment,
+      edgeNameId, edgeRoundabout,
       shapeOffset, shapeLat, shapeLon,
     },
+    roadNames,
     restrictions: { banned, bannedSequences, edgeRestricted },
     stats,
   };

@@ -99,8 +99,10 @@ function digitsOf(s: string): string {
 
 export class PlacesSearch {
   private readonly items: readonly Indexed[];
+  private readonly raw: readonly Place[];
 
   constructor(places: readonly Place[]) {
+    this.raw = places;
     this.items = places.map((place) => {
       const norm = normalise(place.name);
       return { place, norm, toks: tokens(place.name) };
@@ -111,7 +113,31 @@ export class PlacesSearch {
     return this.items.length;
   }
 
+  /**
+   * The same search with NO precomputation: normalising and tokenising every name on every call.
+   *
+   * THIS IS NOT DEAD CODE AND IT IS NOT A BENCHMARK TOY. It is the version you write first, and
+   * keeping it runnable is what makes the index's value a measurement instead of a claim. The
+   * product exposes it behind a switch so the latency readout can be watched collapsing as the
+   * index comes on, over the real 7,675-entry corpus, on the machine actually in front of you.
+   *
+   * It MUST return the identical ranking to `search`, or the comparison is between two different
+   * questions. That equivalence is asserted in the tests rather than left to inspection: the only
+   * permitted difference between these two paths is when the work happens.
+   */
+  searchUnindexed(query: string, opts: SearchOptions = {}): SearchHit[] {
+    const rebuilt: Indexed[] = [];
+    for (const place of this.raw) {
+      rebuilt.push({ place, norm: normalise(place.name), toks: tokens(place.name) });
+    }
+    return this.run(rebuilt, query, opts);
+  }
+
   search(query: string, opts: SearchOptions = {}): SearchHit[] {
+    return this.run(this.items, query, opts);
+  }
+
+  private run(items: readonly Indexed[], query: string, opts: SearchOptions): SearchHit[] {
     const q = normalise(query);
     if (q === '') return [];
     const limit = opts.limit ?? 10;
@@ -120,7 +146,7 @@ export class PlacesSearch {
     const prefix: SearchHit[] = [];
     const token: SearchHit[] = [];
 
-    for (const it of this.items) {
+    for (const it of items) {
       const hit = (matchType: SearchHit['matchType'], bonus: number): SearchHit => {
         const base: SearchHit = {
           ...it.place,
@@ -159,7 +185,7 @@ export class PlacesSearch {
     const maxEdits = opts.maxEdits ?? (q.length <= 4 ? 1 : 2);
     const qDigits = digitsOf(q);
     const fuzzy: SearchHit[] = [];
-    for (const it of this.items) {
+    for (const it of items) {
       // RULE 2: a differing digit means a different destination, never a typo. Checked before
       // any distance work, because it is a cheap string compare that rejects most candidates.
       if (digitsOf(it.norm) !== qDigits) continue;

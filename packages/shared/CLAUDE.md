@@ -23,5 +23,12 @@ assume it exists.
   An estimate presented as a fact looks exactly like a fact, so the failure is silent.
 - **`BuildReport.dedupe` counts must be non-zero.** The two extracts overlap along the
   Central/Northern seam, so a zero duplicate count means the dedupe never ran.
+- **`Instruction.distanceM` IS THE LEG BEFORE THE MANOEUVRE, not after it.** It is the distance
+  from the previous manoeuvre to this one, so a step reading "Turn left, 210 m" means the turn is
+  210 m ahead. Both conventions exist in the wild and picking the other one silently shifts every
+  number by one row.
+- **`roadName` is ABSENT, never an empty string, when a way has no name.** Most roads here are
+  unnamed, so this is the common case rather than a defect, and an empty string renders as "Turn
+  left onto " with a dangling preposition.
 - **Imports:** `config/` only. Never a package, never Node built-ins, never the DOM. This
   file is bundled into the browser.

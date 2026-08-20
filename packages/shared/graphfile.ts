@@ -14,14 +14,16 @@
  * typed array can be created as a ZERO-COPY subarray view over the loaded buffer rather than
  * copied out of it. That is the whole point of memory-loading a 40 MB artifact.
  *
- *   header      MAGIC, version, six u32 counts, two u32 JSON byte lengths
+ *   header      MAGIC, version, four u32 counts, three u32 JSON byte lengths
  *   statsJson   graph stats and restriction stats, UTF-8
  *   turnsJson   the banned pair and banned sequence tables, UTF-8. Tiny: tens of entries.
+ *   namesJson   the road name table, a UTF-8 JSON array of strings, indexed by `edgeNameId`
  *   pad         to an 8-byte boundary
  *   f64 block   vertexLat, vertexLon, vertexNodeId, edgeLengthM, edgeWayId
- *   i32 block   csrOffset, csrEdge, edgeFrom, edgeTo, edgeShape, shapeOffset, shapeLat, shapeLon
+ *   i32 block   csrOffset, csrEdge, edgeFrom, edgeTo, edgeShape, edgeNameId, shapeOffset,
+ *               shapeLat, shapeLon
  *   u8  block   edgeSpeedKmh, edgeReversed, edgePrivate, edgeRestricted, edgeClassRank, edgeToll,
- *               edgeTollRoad, edgeTollGate, edgeTollSegment
+ *               edgeTollRoad, edgeTollGate, edgeTollSegment, edgeRoundabout
  *
  * VERSIONING. Any change to the section list, the order, or an element type is a version bump.
  * The loader refuses a mismatch and names the command that rebuilds it, because a silently
@@ -59,14 +61,27 @@ export const GRAPH_MAGIC = 0x5747_4e31;
  * and it is what lets a CLOSED entry-exit system be priced from its published fare matrix: a route
  * occupying spans a..b entered at plaza a and left at plaza b+1. Both are positions and kinds, not
  * amounts, so the rule that a tariff revision never rebuilds the graph still holds.
+ *
+ * v6 added `edgeNameId`, the `namesJson` string table it indexes, and `edgeRoundabout`. Turn-by-turn
+ * instructions cannot be derived without them and cannot be faked from anything else in the file:
+ * a manoeuvre is named after the road it puts you on, and "take the third exit" requires knowing
+ * which edges form the circle. Both are FACTS ABOUT THE ROAD, which is why they live here and not
+ * in the engine. The names are interned rather than stored per edge because they repeat heavily:
+ * a long arterial is hundreds of edges carrying one string.
  */
-export const GRAPH_FORMAT_VERSION = 5;
+export const GRAPH_FORMAT_VERSION = 6;
 
-/** Byte length of the fixed header: magic, version, 6 counts, 2 JSON lengths, all u32. */
+/** Byte length of the fixed header: magic, version, 4 counts, 3 JSON lengths, one spare, all u32. */
 export const GRAPH_HEADER_BYTES = 4 * 10;
 
 /** Per-edge u8 arrays, in write order. The count is what sizes the u8 block. */
-export const U8_SECTIONS_PER_EDGE = 9;
+export const U8_SECTIONS_PER_EDGE = 10;
+
+/** Per-edge i32 arrays that are not derived from a count. Sizes the i32 block alongside the rest. */
+export const I32_SECTIONS_PER_EDGE = 6;
+
+/** `edgeNameId` where the way carries no usable name. Never an index into the table. */
+export const NAME_NONE = -1;
 
 /**
  * Values of `edgeTollGate`. Here rather than in the pipeline because the writer and the reader are

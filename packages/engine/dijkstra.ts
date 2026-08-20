@@ -122,6 +122,10 @@ export interface RoutableGraph {
   readonly edgeTollGate: Uint8Array;
   /** Which inter-plaza span this edge lies in on a closed-system road; 255 when not applicable. */
   readonly edgeTollSegment: Uint8Array;
+  /** Index into the artifact's road name table, `NAME_NONE` when unnamed. Read only by instructions. */
+  readonly edgeNameId: Int32Array;
+  /** 1 when the edge is part of a roundabout or circular junction. Read only by instructions. */
+  readonly edgeRoundabout: Uint8Array;
   readonly shapeOffset: Int32Array;
   readonly shapeLat: Int32Array;
   readonly shapeLon: Int32Array;

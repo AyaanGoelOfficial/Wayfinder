@@ -55,4 +55,16 @@ filesystem, and `tools/`. Nothing in `packages/` may import from here.
   red on a hand edit. If this script gets built it becomes the only writer; until then the test is
   the whole enforcement.
 - **Long-running scripts print progress with counts, not spinners.** These run for minutes
+- **`npm run diagnose:pair -- <a> <b>`** prices ONE pair term by term under the full objective, both
+  our line and OSRM's, with the same estimator on both and the instrument's self-error printed
+  beside every verdict. `diagnose:route` sorts all 56 pairs into causes; this argues one of them.
+- **`npm run isolate:tolls`** turns each of the three toll changes off from the current state, one
+  at a time, over one graph in one process, and re-composes them to check whether they interact.
+  They do: the Yamuna interaction term is larger than any single effect.
+- **`npm run audit:yamuna`** locates the toll-tag boundary on the Yamuna Expressway: the shared
+  node ids and coordinates, the bounding box of the untagged stretch, what meets each end, and the
+  toll booths near it. Built because gate 6 closed with that boundary as an open question and a
+  latitude is not somewhere a person can stand.
+- **`npm run calibrate:epe`** fits the EPE chainage anchor and REFUSES on a drifting residual. It is
+  the only thing that may set `EPE_CHAINAGE_AT_CLIP_SOUTH_END_KM`.
   over a 546 MB input, and a number that stops moving is the only usable failure signal.

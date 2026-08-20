@@ -13,6 +13,7 @@
 import { defineConfig } from 'vite';
 import type { PluginOption } from 'vite';
 import react from '@vitejs/plugin-react';
+import { fileURLToPath } from 'node:url';
 
 const API_TARGET = process.env['API_TARGET'] ?? 'http://localhost:8080';
 const useHttps = process.env['HTTPS'] === '1';
@@ -25,6 +26,22 @@ export default defineConfig(async () => {
   }
   return {
     plugins,
+    /*
+     * EXACTLY TWO ALIASES, and the omissions are the point. `packages/CLAUDE.md` allows the client
+     * to import `config/` and `shared/` and nothing else; `engine/` and `pipeline/` are deliberately
+     * absent so an accidental import fails at build time rather than shipping hundreds of megabytes
+     * of typed arrays, or a native binary call, into a browser bundle.
+     */
+    resolve: {
+      alias: [
+        { find: /^@config\//, replacement: `${fileURLToPath(new URL('../../config/', import.meta.url))}` },
+        {
+          find: /^@wayfinder\/shared$/,
+          replacement: fileURLToPath(new URL('../shared/index.ts', import.meta.url)),
+        },
+        { find: /^@wayfinder\/shared\//, replacement: `${fileURLToPath(new URL('../shared/', import.meta.url))}` },
+      ],
+    },
     // maplibre-gl spawns its worker with `new Worker(new URL(...), {type:'module'})`. Vite's
     // dependency pre-bundling rewrites that URL to a path it never emits, so the worker 404s,
     // and a MapLibre map with no worker silently renders nothing while reporting no error and

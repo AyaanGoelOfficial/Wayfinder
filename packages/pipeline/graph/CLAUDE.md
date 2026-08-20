@@ -61,4 +61,15 @@ structural: if this folder is right, no route the engine computes can be illegal
 - **Distance is haversine, from `geo.ts`, and there must be exactly ONE implementation.** When
   the engine needs it, that file moves to `packages/shared/` rather than being copied. Two
   distance functions is how the ETA and the drawn line start disagreeing.
+- **ROAD NAMES ARE INTERNED, AND A SEMICOLON IS AN ENCODING, NOT A NAME.** OSM joins multiple
+  values with `;`, so a road carrying two national numbers is tagged `NH34;NH334C`, and that reached
+  the turn-by-turn list verbatim as "Continue onto NH34;NH334C". Only two names in the whole table
+  carry it, which is exactly why it survived review: rare enough to miss, user-facing when it
+  appears. The first value is what a sign leads with. `name` is preferred over `ref`, and an empty
+  string never enters the table or every unnamed edge would share index 0 and read as a road
+  actually called "".
+- **`junction=roundabout` IS STORED PER EDGE even though it is already consumed as an implied
+  one-way.** "Take the third exit" is a statement about the circle, and the exit has to be COUNTED
+  while traversing it. Nothing else in the artifact identifies which edges form the circle, so the
+  engine cannot recover it. This is what made the format v6 bump, alongside the name table.
 - **Imports:** `config/`, `../clip/`, Node built-ins. Never `engine/`, never `server/`.
