@@ -72,4 +72,17 @@ structural: if this folder is right, no route the engine computes can be illegal
   one-way.** "Take the third exit" is a statement about the circle, and the exit has to be COUNTED
   while traversing it. Nothing else in the artifact identifies which edges form the circle, so the
   engine cannot recover it. This is what made the format v6 bump, alongside the name table.
+- **A CIRCLE IS A SHAPE, AND OSM OFTEN FORGETS THE TAG.** Two roundabouts on `alpha-1 to surajpur`
+  are `highway=secondary oneway=yes` closed loops with eight connections each and no `junction` tag,
+  so the instruction builder announced neither and called one of the entries a turn that does not
+  exist. `isUntaggedCircle` promotes a closed, ALREADY one-way, non-service way whose widest span is
+  at most 180 m and which touches at least three other drivable ways. Every number is measured: the
+  widest circle OSM itself tags here spans 181 m, the one-way block systems above start at 290 m,
+  and the connection test is what separates a roundabout from a cul-de-sac turning head, which is
+  also a small closed one-way loop. Without it 109 loops promote and 86 are turning heads.
+- **⛔ PROMOTION IS ADDITIVE AND MUST NEVER FEED BACK INTO ONE-WAY INFERENCE.** It requires the way
+  to be one-way already, from its own tags, so promoting can never change a direction of travel and
+  therefore can never change a route. `edgeRoundabout` is read by the instruction builder and by
+  nothing else. Feeding it back into `directionOf` would turn an instruction fix into a legality
+  change, which is the one thing this folder must not do by accident.
 - **Imports:** `config/`, `../clip/`, Node built-ins. Never `engine/`, never `server/`.

@@ -91,6 +91,22 @@ which is what lets the whole ladder be tested against hand-built toy graphs.
   with a local flat approximation. They agree to about half a percent, which is nothing over a route
   and everything at a corner: the index landed one shape point past a square left, the bearing was
   read from after the turn to further after it, and a 90 degree turn was never announced.
+- **ONE INSTRUCTION PER ROUNDABOUT, AT THE ENTRY.** A separate enter and exit produced a pair whose
+  second half read "0 m" on every small circle, because on a short traversal the entry and the exit
+  are the same place, and a careful reader took "enter, 1.3 km" then "exit, 0 m" to mean 1.3 km were
+  driven inside the circle. A number that has to be explained is wrong on screen. `roundabout-enter`
+  survives only for a route that ENDS on a circle, and must not invent an exit number there.
+- **A DIVIDED EXIT IS ONE EXIT.** It meets the circle twice, once per carriageway, and counting both
+  inflates that exit and every later one. Exit points closer than `SAME_EXIT_M` merge. The threshold
+  is bounded by measurement on both sides: 28.6 m is the smallest gap confirmed genuine on the
+  ground, 8.4 m the smallest observed spurious one, the latter being 14 degrees of arc on a 218 m
+  circle.
+- **A U-TURN PENALTY IS NOT A DIVIDED-ROAD REVERSAL PENALTY, and conflating them would be a defect.**
+  `uTurnS` prices the REVERSE TWIN only. Going round a median gap onto the opposite carriageway uses
+  a different edge and is never charged by it, correctly: it is legal, it is often the only way to
+  reach the other side, and Google produces the identical manoeuvre where we do. Measured: the knee
+  where twin U-turns stop being chosen is 8 s, the shipped 40 s is five times above it, and the
+  reviewed route is geometrically identical from 0 to 600 s.
 - **`searchUnindexed` IS NOT DEAD CODE.** It is the same ranking with no precomputation, kept
   runnable so the index's value is measured in the product rather than asserted. It MUST return the
   identical ranking to `search`, and `tests/engine/search.test.ts` enforces that rather than trusting

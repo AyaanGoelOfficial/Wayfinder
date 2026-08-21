@@ -730,15 +730,29 @@ export const TURN_COST = {
   /** Seconds per step DOWN the road class rank. This is what stops residential rat running. */
   classDropS: 2,
   /**
-   * Seconds for a U-turn onto the reverse twin. A PENALTY, never a ban.
+   * Seconds for a U-turn onto the reverse twin. A PENALTY, never a ban, and exempt at a dead end.
    *
-   * THIS ONE IS NOT CALIBRATED, and cannot be from the validation set: across all 56 pairs the
-   * router takes ZERO U-turns, so a candidate with  produces results identical to one
-   * with , down to every digit. That matches the gate 3 measurement of 0 reverse-twin
-   * U-turns over 92 km of real routes. The mechanism is proved by unit test, not by this number.
-   * 40 s is a reasoned value, roughly what waiting for a gap and turning actually costs, and it is
-   * deliberately on the discouraging side. It gets its real calibration at gate 8, where re-routing
-   * from a matched mid-road position is the first thing that will actually exercise it.
+   * CALIBRATED AT GATE 8, and the earlier note here was wrong. It claimed the router takes zero
+   * U-turns at any value, so no value could be distinguished from any other. That was measured at
+   * the shipping penalty, which is circular: at a high penalty of course none are taken. Sweeping
+   * the constant itself over 57 pairs, counting manoeuvres onto the reverse twin:
+   *
+   *     uTurnS      0    1    2    3    5    8   10   20   40   60  120  600
+   *     U-turns    13   11    5    3    1    0    0    0    0    0    0    0
+   *     routes     12   10    4    3    1    0    0    0    0    0    0    0   differing from 40 s
+   *
+   * THE KNEE IS AT 8 SECONDS. Below it the router really does turn round mid-carriageway, thirteen
+   * times when the manoeuvre is free. At and above it nothing changes: identical routes, identical
+   * 2,674.0 km and 3,002.3 drive minutes, all the way to 600 s. 40 s sits five times above the knee
+   * inside that flat region, so it is safely on the discouraging side without being a de facto ban,
+   * and it is roughly what waiting for a gap and turning actually costs.
+   *
+   * ⛔ THIS DOES NOT PRICE A DIVIDED-ROAD REVERSAL, and the two must not be confused. Driving to a
+   * gap in the median and returning on the opposite carriageway uses a DIFFERENT edge, not the
+   * reverse twin, so no penalty here applies to it and none should: it is legal, it is often the
+   * only way to reach an address on the other side, and Google produces the identical manoeuvre on
+   * `alpha-1 to surajpur`. Verified: that route's geometry is byte-identical at every value from 0
+   * to 600. A penalty that removed it would be too high by construction.
    */
   uTurnS: 40,
   /** True where traffic drives on the left. Decides which way a crossing turn goes. */

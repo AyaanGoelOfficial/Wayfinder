@@ -12,7 +12,7 @@
  * the stack, and it does so on the largest component, which is exactly the input that matters.
  */
 import { haversineM } from '../../shared/geo.ts';
-import { attributeTollRamps, classifyWay, tollGateKindOf, tollRoadOf } from './profile.ts';
+import { attributeTollRamps, classifyWay, isUntaggedCircle, tollGateKindOf, tollRoadOf } from './profile.ts';
 import { computeEpeChainage, epeSegmentOf } from './epe.ts';
 import { EPE_SEGMENT_NONE, NAME_NONE } from '../../shared/graphfile.ts';
 import { TOLL_ROADS } from '../../../config/city.ts';
@@ -164,7 +164,8 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
     readonly backward: boolean;
     readonly isPrivate: boolean;
     readonly nameId: number;
-    readonly roundabout: boolean;
+    /** Filled from tags here, then OR'd with the geometric circle test once `useCount` is complete. */
+    roundabout: boolean;
   }
   const kept: Kept[] = [];
 
@@ -309,9 +310,51 @@ export function buildGraph(clipped: Clipped, log: Progress = () => {}): Graph {
       `${epe.chainageKmOf.size} node(s) with chainage${epe.usable ? '' : ' (TOO SHORT, spans not assigned)'}`,
   );
 
-  for (let i = 0; i < nodeCount; i++) {
-    if ((useCount[i] as number) >= 2) isVertex[i] = 1;
+  for (let i = 0; i < nodeCount; i++) {
+    if ((useCount[i] as number) >= 2) isVertex[i] = 1;
+  }
+
+  // ---- roundabouts OSM did not tag ----------------------------------------------------------
+  //
+  // Runs HERE and not in the kept loop because it needs `useCount` complete: a circulation is a
+  // roundabout when it is a junction, and how many other ways touch it is only known once every
+  // way has been counted. Purely additive, and gated on the way already being one-way from its own
+  // tags, so nothing here can change a direction of travel and therefore nothing here can change a
+  // route. See `isUntaggedCircle`.
+  let promotedCircles = 0;
+  for (const k of kept) {
+    if (k.roundabout) continue;
+    const way = clipped.ways[k.wayIndex] as (typeof clipped.ways)[number];
+    const first = k.idx[0] as number;
+    const last = k.idx[k.idx.length - 1] as number;
+    if (k.idx.length < 4 || first !== last) continue;
+    let connections = 0;
+    const counted = new Set<number>();
+    for (const i of k.idx) {
+      if (counted.has(i)) continue;
+      counted.add(i);
+      if ((useCount[i] as number) >= 2) connections++;
+    }
+    let spanM = 0;
+    for (let a = 0; a < k.idx.length; a++) {
+      for (let b = a + 1; b < k.idx.length; b++) {
+        const ia = k.idx[a] as number;
+        const ib = k.idx[b] as number;
+        const d = haversineM(
+          (nodeLat[ia] as number) / COORD_SCALE,
+          (nodeLon[ia] as number) / COORD_SCALE,
+          (nodeLat[ib] as number) / COORD_SCALE,
+          (nodeLon[ib] as number) / COORD_SCALE,
+        );
+        if (d > spanM) spanM = d;
+      }
+    }
+    if (isUntaggedCircle(way.tags, k.idx as unknown as readonly number[], k.forward !== k.backward, spanM, connections)) {
+      k.roundabout = true;
+      promotedCircles++;
+    }
   }
+  log(`  circles: ${promotedCircles} untagged closed one-way junction(s) treated as roundabouts`);
 
   // Dense vertex numbering.
   const vertexOf = new Int32Array(nodeCount).fill(-1);

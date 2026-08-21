@@ -221,7 +221,7 @@ about OSM coverage and was corrected, not loosened.
 
 ---
 
-## No U-turn prohibition yet. Measured at gate 3, decided at gate 6.
+## U-turn pricing. Measured at gate 3, built at gate 4, CALIBRATED at gate 8.
 
 **The search does not forbid the reverse twin of the edge it arrived on.** `Route` expands
 every outgoing edge at `edgeTo[e]`, and the twin is in that set, so only OSM-recorded
@@ -255,6 +255,36 @@ to elsewhere either.
 - **It must land before gate 8.** Re-routing from a matched mid-road position is exactly where
   U-turn pricing bites: an unpriced U-turn there produces an instruction a driver cannot legally
   follow, which is worse than a slower route.
+
+**BUILT AT GATE 4, not gate 6, and the section above was never updated to say so.** `buildTurnCosts`
+charges `cfg.uTurnS` on the reverse twin and exempts it where the out-degree is 1, both asserted by
+unit test. Every term pinned above is implemented. What was genuinely outstanding was the number.
+
+**CALIBRATED AT GATE 8, and the previous justification was circular.** It said the router takes zero
+U-turns at any value, so no value could be told from another. That was measured at the shipping
+penalty: at a high penalty, of course none are taken. Sweeping the constant itself across the 56
+validation pairs plus the reviewed UI pair, counting manoeuvres onto the reverse twin:
+
+```
+  uTurnS      0    1    2    3    5    8   10   20   40   60  120  600
+  U-turns    13   11    5    3    1    0    0    0    0    0    0    0
+  routes     12   10    4    3    1    0    0    0    0    0    0    0   differing from 40 s
+  total km        2674.5 at 0 s, 2674.0 from 8 s upward
+  drive min       3002.9 at 0 s, 3002.3 from 8 s upward
+```
+
+**The knee is at 8 seconds.** Below it the router really does turn round mid-carriageway, thirteen
+times when it is free. At and above it nothing changes at all, to 600 s. 40 s sits five times above
+the knee inside that flat region: discouraging without being a de facto ban, and roughly what
+waiting for a gap and turning actually costs.
+
+**⛔ A DIVIDED-ROAD REVERSAL IS NOT A U-TURN AND IS NOT PRICED BY THIS.** Driving to a gap in the
+median and returning on the opposite carriageway uses a DIFFERENT edge, not the reverse twin, so
+`uTurnS` never applies to it. That is correct: it is legal, it is frequently the only way to reach
+an address on the other side, and Google produces the identical manoeuvre 620 m into
+`alpha-1 to surajpur`. **Verified: that route is geometrically identical at every value from 0 to
+600 s**, so no setting of this penalty can remove it. A penalty that did would be too high by
+construction, and this is the check that would catch it.
 
 ---
 
@@ -633,7 +663,7 @@ secondary connectors; OSRM takes **21.24 km of unnamed secondary** running direc
 preference doing exactly what it was built to do, and it is a judgement a local driver can overrule.
 Instrument self-error on this pair is 0.01 minutes, so the 2.79 minute margin is real.
 
-### OPEN: 13.07 km of the Yamuna Expressway carries no toll tag, and we cannot settle why
+### RESOLVED at gate 8: the 13.07 km northern approach is genuinely free
 
 Measured on the mainline (`highway=motorway`, name `Yamuna Expressway`) inside our clip:
 
@@ -672,10 +702,19 @@ tagging gap would look like.
 It is not a rounding matter: `jewar to gaur-city` drives 25.61 km of the expressway and is billed
 for 12.55, and the 13.06 km difference is precisely this stretch.
 
-**Not treated as a defect and not corrected**, because correcting it means asserting a toll the data
-does not claim, and `hard-rules.md` forbids exactly that kind of inference. **One sentence from
-someone who drives it settles it**, and if the stretch is tolled the fix is a way-id list in
-`config/city.ts` and a rebuild.
+**RESOLVED, and OSM is right.** The stretch is genuinely untolled, on the word of someone who
+drives it. Pari Chowk has neither a mainline plaza nor a ramp booth, so a trip ending there crosses
+no barrier and is charged nothing. The tag is left exactly as it is; nothing in `config/city.ts`
+changes.
+
+This closes `jewar to gaur-city` exactly: 25.61 km of expressway driven, 12.55 km billed, and the
+13.06 km difference is this approach. The arithmetic was never wrong, only unexplained.
+
+**Enforced rather than recorded.** `npm run gate:fixtures` now asserts Dankaur to Pari Chowk costs
+zero and displays no figure at all, with a positive control beside it: Jewar to Ghaziabad, which
+does cross the barrier, must still bill. A resolution written only in prose regresses silently the
+next time the toll model moves, and this one is the difference between billing a driver and not.
+It lives in the fixture gate because `scripts/acceptance.ts` is gate 9 and does not exist yet.
 
 ---
 
@@ -781,6 +820,92 @@ reduced motion                honoured, durations collapsed
 ```
 
 **Not run: `verify:browser` and `acceptance`.** Neither is built; they are gates 8 and 9.
+
+---
+
+## Roundabouts, and the two that OSM did not tag. Fixed at gate 8, from a real review.
+
+**A route reviewed by someone who drives it reported five roundabouts where the product announced
+three.** Same failure class as the Yamuna merge that fired nothing: the generator was correct about
+everything it could see, and could not see two of them.
+
+**The reconciliation came first, and it moved the whole investigation.** The reported route was
+7.4 km with exits 3, 1, 2; the figures in the previous report were 7.72 km with exits 4, 2, 1, 2.
+Both were current. The origin is the same point either way, because the `alpha-1` routing fixture
+IS the "Alpha 1" railway station the search returns. The DESTINATION differs: the `surajpur` fixture
+sits at 28.51065, 77.47861 and the searched place is the suburb at 28.5125763, 77.4792766, about
+225 m north east, and that is a different route. The earlier probe compounded it by rounding those
+coordinates to five decimals, which moved the point about 4 m and snapped it to a different edge
+again. **A fixture and a search result are not interchangeable inputs**, and neither is a rounded
+coordinate.
+
+### What the five circles actually are
+
+| along the route | way | `junction` tag | edges used |
+|---|---|---|---|
+| 1.09 km | 753900887 + 63223326 + 1392918734 | roundabout | 5 |
+| 2.60 km | 753900901 | roundabout | 1 |
+| **3.64 km** | **63540337** | **none** | 4 |
+| 5.48 km | 63540374 | roundabout | 4 |
+| **6.83 km** | **63623011** | **none** | 6 |
+
+The two silent ones are `highway=secondary oneway=yes` CLOSED loops of 232 m and 218 m with eight
+connections each. They are roundabouts by shape and by function, and OSM simply never tagged them.
+
+**The phantom turn had the same root cause.** "Turn right" after "take exit 1" was the ENTRY to way
+63540337: untagged, so the generator saw a sharp angle into a circle and called it a turn. One fix
+removed both symptoms.
+
+### Detecting a circle without the tag
+
+Additive only, and gated on the way already being one-way from its own tags, so promotion can never
+change a direction of travel and therefore can never change a route. `edgeRoundabout` is read by the
+instruction builder and by nothing else.
+
+| test | why, and where the number came from |
+|---|---|
+| closed way | first ref equals last ref. A circulation is a loop |
+| already one-way | so legality is untouched. Never inferred here |
+| widest span <= 180 m | the widest circle OSM itself calls a roundabout in this clip is 181 m; the one-way block systems above it span 290 to 715 m |
+| >= 3 connections | THIS is what separates a roundabout from a cul-de-sac turning head. Both are small closed one-way loops; only one is somewhere a driver takes an exit. Turning heads connect at one point, the two circles here at eight. Without it, 109 loops promote and 86 are turning heads and parking aisles |
+| not `highway=service` | parking aisles circulate too. Costs nothing: a service way that really is a roundabout is normally tagged, and the tag always wins |
+
+58 ways promote. Roundabout edges in the artifact go from 1,514 to 1,868.
+
+### One instruction per circle, not two
+
+An enter and an exit produced a pair whose second half read "0 m" on every small circle, because on
+a short traversal the entry and the exit are the same place. A careful reader took "enter, 1.3 km"
+followed by "take exit 1, 0 m" to mean 1.3 km were driven INSIDE the circle, which is the opposite
+of what the numbers said. **A number that has to be explained is wrong on screen.** One instruction
+is emitted now, at the entry, naming the exit, which is the one thing the driver needs at the one
+moment they need it. `roundabout-enter` survives in the contract for the degenerate case where a
+route ends while still on a circle, and must never invent an exit number there.
+
+### A divided exit is one exit
+
+Auditing the exit counter found two "exits" 8.4 m apart on a 218 m circumference, which is 14
+degrees of arc. No roundabout has two separate exits 14 degrees apart, so this is geometry rather
+than a guess about tags: it is one physical exit meeting the circle twice, once per carriageway, and
+counting both inflates that exit and every later one. Exit points closer than 12 m now merge. The
+threshold is bounded on both sides by measurement: **28.6 m is the smallest gap between exits
+confirmed genuine on the ground, and 8.4 m the smallest observed spurious one.**
+
+### The result, and what is still unverified
+
+13 instructions where there were 16, five roundabouts where there were three, no phantom turn, no
+0 m legs, and the exit sequence reads 3, 1, 3, 2, 3. **Both exit numbers confirmed by local
+knowledge survive**: exit 3 at the first circle, and exit 2 at the circle 5.5 km in, which was third
+of three in the old list and is fourth of five now.
+
+**The route geometry never moved**, which is what the promotion rule was designed to guarantee:
+7.40 km over 59 edges before this work and after it, and the benchmark's settled counts are
+identical to the previous run on every rung. An instruction fix that changed a route would have been
+a legality change wearing the wrong clothes.
+
+**Still unverified: the two newly detected circles report exit 3 and exit 3, and nobody has driven
+those with the numbers in front of them.** The last of them is also the one whose count the divided
+exit merge changed, from 4 to 3.
 
 ---
 

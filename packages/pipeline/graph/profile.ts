@@ -325,6 +325,62 @@ export function parseMaxspeed(raw: string | undefined): number | undefined {
  * junction. An explicit `oneway=no` overrides every implication, which is why the explicit tag
  * is read first.
  */
+/**
+ * The largest circle in this city that OSM itself calls a roundabout, in metres across.
+ *
+ * MEASURED, not chosen. Over the 188 closed drivable ways tagged `junction=roundabout` or
+ * `circular` in our clip, the widest span is 181 m and the median is 50 m. Capping promotion at
+ * 180 m is therefore the statement "never call something a roundabout that is bigger than the
+ * biggest thing OSM calls a roundabout here", which is a bound taken from the data rather than
+ * from taste. Above it sit the one-way block systems: spans of 290 to 715 m.
+ */
+const CIRCLE_MAX_SPAN_M = 180;
+
+/**
+ * How many other drivable ways a circulation must touch before it is a junction.
+ *
+ * THIS IS THE RULE THAT SEPARATES A ROUNDABOUT FROM A CUL-DE-SAC TURNING HEAD, and it is the one
+ * that matters: both are small closed one-way loops, and only one of them is somewhere a driver
+ * takes an exit from. A turning head connects at one point. The two untagged circles that started
+ * this connect at eight each. Without it, 109 loops promote and 86 of them are turning heads and
+ * car park aisles.
+ */
+const CIRCLE_MIN_CONNECTIONS = 3;
+
+/**
+ * Is this closed way a roundabout circulation that OSM simply did not tag?
+ *
+ * ⛔ PURELY ADDITIVE, AND NEVER FED BACK INTO ONE-WAY INFERENCE. A tagged roundabout keeps its flag
+ * whatever this returns, and this only ever turns the flag ON. It also REQUIRES the way to be
+ * one-way already, from its own tags, so promoting a way can never change its direction of travel
+ * and therefore can never change a route. `edgeRoundabout` is read by the instruction builder and
+ * by nothing else; legality stays exactly where `directionOf` put it.
+ *
+ * WHY IT EXISTS. Two circles on `alpha-1 to surajpur` are `highway=secondary oneway=yes` closed
+ * loops of 232 m and 218 m with eight connections each, and neither carries a `junction` tag. They
+ * are roundabouts on the ground, confirmed by someone who drives them. Untagged, the instruction
+ * builder saw the entry as a sharp angle and announced a turn that does not exist, and the two
+ * roundabouts themselves passed in silence. Tag absence is common and a circle is a shape.
+ *
+ * `highway=service` is excluded: parking aisles and back lanes circulate too, and they are not
+ * junctions anyone takes a numbered exit from. Excluding them costs nothing, because a service way
+ * that really is a roundabout is normally tagged as one, and the tag always wins.
+ */
+export function isUntaggedCircle(
+  tags: ReadonlyMap<string, string>,
+  refs: readonly number[],
+  oneway: boolean,
+  spanM: number,
+  connections: number,
+): boolean {
+  if (!oneway) return false;
+  if (refs.length < 4) return false;
+  if (refs[0] !== refs[refs.length - 1]) return false;
+  if ((tags.get('junction') ?? '') !== '') return false;
+  if ((tags.get('highway') ?? '') === 'service') return false;
+  return spanM <= CIRCLE_MAX_SPAN_M && connections >= CIRCLE_MIN_CONNECTIONS;
+}
+
 export function directionOf(
   tags: ReadonlyMap<string, string>,
   highway: string,

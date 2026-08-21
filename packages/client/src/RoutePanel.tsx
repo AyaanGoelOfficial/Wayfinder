@@ -39,7 +39,7 @@ const PHRASE: Record<ManeuverType, string> = {
   'turn-sharp-right': 'Sharp right onto',
   straight: 'Continue onto',
   'roundabout-enter': 'Enter the roundabout',
-  'roundabout-exit': 'Leave the roundabout onto',
+  'roundabout-exit': 'At the roundabout, take exit',
   merge: 'Merge onto',
   'fork-left': 'Keep left onto',
   'fork-right': 'Keep right onto',
@@ -70,9 +70,12 @@ function stepText(step: Instruction): string {
   if (step.type === 'arrive') return PHRASE.arrive;
   if (step.type === 'roundabout-enter') return PHRASE['roundabout-enter'];
   if (step.type === 'roundabout-exit') {
+    // One instruction per circle, given BEFORE entering it, which is the moment the driver needs
+    // it. The engine positions it at the entry; the wording has to match that or the panel says
+    // "take exit 2" at a point the driver has already passed.
     const nth = step.roundaboutExit ?? 1;
     const where = step.roadName === undefined ? '' : ` onto ${step.roadName}`;
-    return `Take exit ${nth}${where}`;
+    return `At the roundabout, take exit ${nth}${where}`;
   }
   // An unnamed road is the common case in this city, not an error, so it must read as a sentence
   // rather than as a missing value.

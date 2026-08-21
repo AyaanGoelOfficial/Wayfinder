@@ -305,7 +305,7 @@ describe('instructions: roundabouts are counted, not narrated', () => {
    * The exit taken is counted while traversing, which is the only reason `edgeRoundabout` is in the
    * artifact at all.
    */
-  it('emits one enter and one exit carrying a 1-based exit number', () => {
+  it('emits exactly ONE instruction per circle, at the entry, carrying a 1-based exit number', () => {
     const ins = run(
       [
         { id: 1, lat: 28.4980, lon: 77.5000 },
@@ -326,13 +326,51 @@ describe('instructions: roundabouts are counted, not narrated', () => {
       ],
       [1, 10, 11, 12, 13, 23],
     );
-    expect(types(ins)).toContain('roundabout-enter');
-    expect(types(ins)).toContain('roundabout-exit');
+    // ONE instruction, not a pair. A separate enter and exit read "0 m" on every small circle,
+    // because on a short traversal the entry and the exit are the same place, and a number that
+    // has to be explained is a number that is wrong on screen.
+    expect(ins.filter((i) => i.type === 'roundabout-exit')).toHaveLength(1);
+    expect(ins.filter((i) => i.type === 'roundabout-enter')).toHaveLength(0);
     const exit = ins.find((i) => i.type === 'roundabout-exit');
     expect(exit?.roundaboutExit).toBeGreaterThanOrEqual(1);
     expect(exit?.roadName).toBe('Third Exit Road');
     // The circle itself is never narrated segment by segment.
-    expect(ins.filter((i) => i.type === 'roundabout-enter')).toHaveLength(1);
+    expect(ins.filter((i) => i.type.startsWith('turn'))).toHaveLength(0);
+  });
+
+  /**
+   * The defect this pins: a divided exit meets the circle twice, once per carriageway, and counting
+   * both inflates that exit number and every later one. Measured on `alpha-1 to surajpur` as two
+   * exit nodes 8.4 m apart on a 218 m circumference, which is 14 degrees of arc.
+   */
+  it('counts a divided exit once, not twice', () => {
+    // Two exit roads leaving within a few metres of each other are one physical exit.
+    const ins = run(
+      [
+        { id: 1, lat: 28.4980, lon: 77.5000 },
+        { id: 10, lat: 28.5000, lon: 77.5000 },
+        { id: 11, lat: 28.5000, lon: 77.5020 },
+        { id: 12, lat: 28.50003, lon: 77.50208 }, // 9 m further round: the second carriageway
+        { id: 13, lat: 28.5020, lon: 77.5020 },
+        { id: 14, lat: 28.5020, lon: 77.5000 },
+        { id: 21, lat: 28.5000, lon: 77.5040 },
+        { id: 22, lat: 28.50003, lon: 77.50408 },
+        { id: 23, lat: 28.5040, lon: 77.5020 },
+        { id: 24, lat: 28.5040, lon: 77.5000 },
+      ],
+      [
+        road(100, [1, 10], { name: 'Approach Road' }),
+        { id: 200, refs: [10, 11, 12, 13, 14, 10], tags: { highway: 'tertiary', junction: 'roundabout' } },
+        road(301, [11, 21], { name: 'Divided Exit A' }),
+        road(302, [12, 22], { name: 'Divided Exit B' }),
+        road(303, [13, 23], { name: 'Second Exit Road' }),
+        road(304, [14, 24], { name: 'Third Exit Road' }),
+      ],
+      [1, 10, 11, 12, 13, 23],
+    );
+    const exit = ins.find((i) => i.type === 'roundabout-exit');
+    // Without the merge the two carriageways of the first exit count separately and this reads 3.
+    expect(exit?.roundaboutExit).toBe(2);
   });
 });
 

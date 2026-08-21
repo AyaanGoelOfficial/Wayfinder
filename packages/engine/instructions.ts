@@ -8,8 +8,9 @@
  * THE FOUR SIGNALS, and they are read in this order because a later one is only meaningful once
  * the earlier ones have not already explained the manoeuvre:
  *
- *   1. Is this a roundabout?  `edgeRoundabout` says which edges form the circle. Entering it and
- *      leaving it are two instructions and everything in between is counted, never announced.
+ *   1. Is this a roundabout?  `edgeRoundabout` says which edges form the circle. ONE instruction
+ *      is emitted, at the entry, naming the exit to take. Everything inside is counted, never
+ *      announced, and a circle is never two instructions: on a small one the second reads 0 m.
  *   2. What is the bearing change?  Measured over a ground window, not between adjacent shape
  *      points, so the angle is a property of the road and not of how finely it was surveyed.
  *   3. Did the road name change?  A bend on one continuously named road is not a manoeuvre, however
@@ -41,6 +42,9 @@ export interface InstructionGraph {
   readonly edgeClassRank: Uint8Array;
   readonly edgeNameId: Int32Array;
   readonly edgeRoundabout: Uint8Array;
+  /** Vertex coordinates, read only to tell one divided exit from two separate ones. */
+  readonly vertexLat: Float64Array;
+  readonly vertexLon: Float64Array;
   readonly csrOffset: Int32Array;
   readonly csrEdge: Int32Array;
 }
@@ -163,6 +167,16 @@ function bearingOutOf(geom: readonly LngLat[], at: number): number | null {
 }
 
 /** Two turns within this, the same way round, are one corner. See the suppression below. */
+/**
+ * Two exit points closer than this around a circle are ONE exit mapped twice.
+ *
+ * Roughly a carriageway pair plus a median, which is the physical scale of a divided exit meeting
+ * a roundabout. Bounded by measurement on both sides rather than chosen: 28.6 m is the smallest
+ * gap between exits confirmed genuine on the ground, and 8.4 m is the smallest observed spurious
+ * one. 12 m leaves comparable margin against each.
+ */
+const SAME_EXIT_M = 12;
+
 const SAME_CORNER_M = 40;
 
 /** Which way a manoeuvre swings, or null when it does not swing. */
@@ -326,6 +340,8 @@ export function buildInstructions(input: InstructionInput): Instruction[] {
       // where the route finally leaves, and its ordinal is what the driver is told.
       let j = k + 1;
       let exits = 0;
+      let lastExitLat = Number.NaN;
+      let lastExitLon = Number.NaN;
       while (j < edges.length && g.edgeRoundabout[edges[j] as number] === 1) {
         // An exit exists here when the circle edge's end vertex leads anywhere off the circle.
         const v = g.edgeTo[edges[j] as number] as number;
@@ -333,21 +349,42 @@ export function buildInstructions(input: InstructionInput): Instruction[] {
         const ce = g.csrOffset[v + 1] as number;
         for (let c = cs; c < ce; c++) {
           if (g.edgeRoundabout[g.csrEdge[c] as number] !== 1) {
-            exits++;
+            // ⛔ ONE PHYSICAL EXIT MAY BE MAPPED AS TWO NODES, and counting both inflates every
+            // later exit number by one. A divided exit meets the circle twice, a few metres apart,
+            // once per carriageway. Measured on `alpha-1 to surajpur`: two exit nodes 8.4 m apart
+            // on a circle of 218 m circumference, which is 14 degrees of arc. No roundabout has two
+            // separate exits 14 degrees apart, so this is geometry rather than a guess about tags.
+            // The threshold is bounded on both sides by measurement: the smallest gap confirmed
+            // genuine by someone who drives these roads is 28.6 m, and the smallest spurious one is
+            // 8.4 m.
+            const lat = g.vertexLat[v] as number;
+            const lon = g.vertexLon[v] as number;
+            const sameExit =
+              Number.isFinite(lastExitLat) &&
+              metres([lastExitLon, lastExitLat], [lon, lat]) < SAME_EXIT_M;
+            if (!sameExit) exits++;
+            lastExitLat = lat;
+            lastExitLon = lon;
             break;
           }
         }
         j++;
       }
-      push('roundabout-enter', at, nameOf(next));
       if (j < edges.length) {
-        // The exit the route takes is the last counted one, since the walk stopped where the route
-        // left the circle. Counting is 1-based for the driver.
-        push('roundabout-exit', junctionIndex[j - 1] as number, nameOf(edges[j] as number), Math.max(1, exits));
+        // ⛔ ONE INSTRUCTION PER ROUNDABOUT, PLACED AT THE ENTRY. Emitting a separate enter and exit
+        // produced a pair whose second half read "0 m" on every small circle, because the entry and
+        // the exit are the same place on an 18 m fragment. A reviewer read that as "drive 1.3 km
+        // inside the circle, then leave", which is the opposite of what the numbers meant, and a
+        // number that has to be explained is a number that is wrong on screen. The driver needs one
+        // thing at one moment: which exit to take, told before entering. `roundabout-enter` is kept
+        // in the contract for the degenerate case below and is not otherwise emitted.
+        push('roundabout-exit', at, nameAhead(j), Math.max(1, exits));
         k = j;
         continue;
       }
-      // The route ends on the circle, which is degenerate but must not crash or invent an exit.
+      // The route ENDS on the circle. Degenerate, but it must not crash and must not invent an exit
+      // number for an exit that was never taken.
+      push('roundabout-enter', at, nameOf(next));
       k = j;
       continue;
     }

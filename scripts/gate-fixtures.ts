@@ -16,7 +16,7 @@
  */
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { BUILD_AREA, SNAP_DESTINATION_M, SNAP_TRACKING_M } from '../config/city.ts';
+import { BUILD_AREA, OBJECTIVE, SNAP_DESTINATION_M, SNAP_TRACKING_M, TURN_COST } from '../config/city.ts';
 import { ROUTING_FIXTURES } from '../config/fixtures/routing.ts';
 import { SEARCH_FIXTURES, SEARCH_BUDGET_MS } from '../config/fixtures/search.ts';
 import { HELD_OUT_QUERIES, HELD_OUT_PASS_RATIO } from '../config/fixtures/heldout.ts';
@@ -356,6 +356,63 @@ console.log('\n--- kasana: the combined fuzzy-match and named-road test ---');
   );
   const spelledKasana = hits.some((h) => /kasana/i.test(h.name));
   check(spelledKasana, 'Kasna: resolves to the real KASANA spelling', hits.slice(0, 4).map((h) => `${h.name} [${h.kind}]`).join(', '));
+}
+
+// ---------------------------------------------------------------------------
+// Toll resolution: the free northern approach on the Yamuna Expressway.
+//
+// Gate 6 closed with 13.07 km of the mainline carrying no toll tag, contiguous from the last
+// interchange with booths up to the northern terminus, and no way to tell a free approach from a
+// tagging gap out of OSM alone. RESOLVED at gate 8 by local knowledge: the stretch is genuinely
+// untolled, and Pari Chowk has neither a plaza nor a ramp booth, so a trip ending there crosses no
+// barrier and must be charged nothing.
+//
+// Enforced HERE and not in `scripts/acceptance.ts`, which is gate 9 and does not exist yet. A
+// resolution recorded only in prose is a resolution that regresses silently the next time the toll
+// model moves, and this one is the difference between billing a driver and not.
+// ---------------------------------------------------------------------------
+// The production objective and turn model, so the figure this asserts is the one a user is
+// shown. A router built with defaults here would be checking a different product.
+const tollRouter = new Router(graph, buildTurnTable(graph, clipped.relations, vertexOfNodeId, clipped), TURN_COST, OBJECTIVE);
+
+{
+  console.log('');
+  console.log('--- Yamuna northern approach: Dankaur to Pari Chowk must cost nothing ---');
+  const dankaur: [number, number] = [77.5540411, 28.3495679];
+  const pariChowk: [number, number] = [77.50821955625, 28.46323484375];
+  const sa = snapIndex.snap(dankaur, 'destination', SNAP_DESTINATION_M);
+  const sb = snapIndex.snap(pariChowk, 'destination', SNAP_DESTINATION_M);
+  if (sa === null || sb === null) {
+    check(false, 'Dankaur and Pari Chowk both snap', 'one of them did not snap');
+  } else {
+    const r = tollRouter.route(sa.edgeId, sa.fraction, sb.edgeId, sb.fraction, { algorithm: 'bidirectional' });
+    if (r === null) {
+      check(false, 'Dankaur to Pari Chowk returns a route', 'no route found');
+    } else {
+      check(
+        r.tollCost === 0,
+        'Dankaur to Pari Chowk is charged nothing: the northern approach is free and Pari Chowk has no plaza',
+        `${(r.metres / 1000).toFixed(2)} km, ${r.tollCost.toFixed(2)} rupees, ${(r.tollMetres / 1000).toFixed(2)} tolled km`,
+      );
+      check(
+        r.tollDisplay === 'none',
+        'and it shows no toll figure at all, rather than a zero',
+        `display ${r.tollDisplay}, confidence ${r.tollConfidence}`,
+      );
+      // POSITIVE CONTROL, per hard-rules.md: a zero from a working toll model and a zero from a
+      // broken one are indistinguishable. A pair that DOES cross the Jewar barrier must still bill.
+      const j1 = snapIndex.snap([77.5571558, 28.123206], 'destination', SNAP_DESTINATION_M);
+      const j2 = snapIndex.snap([77.4120356, 28.6711527], 'destination', SNAP_DESTINATION_M);
+      if (j1 !== null && j2 !== null) {
+        const c = tollRouter.route(j1.edgeId, j1.fraction, j2.edgeId, j2.fraction, { algorithm: 'bidirectional' });
+        check(
+          c !== null && c.tollCost > 0,
+          'CONTROL: a pair that does cross a barrier is still charged, so the zero above is about the road',
+          c === null ? 'no route' : `Jewar to Ghaziabad, ${c.tollCost.toFixed(2)} rupees`,
+        );
+      }
+    }
+  }
 }
 
 console.log('');
