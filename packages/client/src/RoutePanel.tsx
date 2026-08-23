@@ -153,6 +153,17 @@ export function RoutePanel(): ReactElement | null {
         </p>
       )}
 
+      {(route.originApproach !== null || route.destinationApproach !== null) && (
+        <p className="approach" role="note">
+          {route.originApproach !== null && (
+            <span className="approach-leg">{`${distance(route.originApproach.metres)} on foot to the road`}</span>
+          )}
+          {route.destinationApproach !== null && (
+            <span className="approach-leg">{`Then ${distance(route.destinationApproach.metres)} on foot`}</span>
+          )}
+        </p>
+      )}
+
       <ol className="steps">
         {route.instructions.map((step, i) => (
           <li className="step" key={`${step.geometryIndex}-${i}`}>

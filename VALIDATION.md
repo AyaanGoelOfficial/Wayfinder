@@ -12,9 +12,9 @@ router, not a change in the dice.
 
 | Metric | Value | Threshold | Verdict |
 |---|---|---|---|
-| Distance, median absolute delta | 1.96% | 3.00% | PASS |
-| Distance, p95 absolute delta | 16.17% | 7.00% | FAIL |
-| Duration, median absolute delta | 7.51% | reported only | n/a |
+| Distance, median absolute delta | 2.15% | 3.00% | PASS |
+| Distance, p95 absolute delta | 16.46% | 7.00% | FAIL |
+| Duration, median absolute delta | 7.38% | reported only | n/a |
 | Duration, p95 absolute delta | 23.91% | reported only | n/a |
 
 Compared 56 pairs (6 landmark, 50 random). Skipped 0.
@@ -118,7 +118,7 @@ that boundary plus a 3 km buffer while OSRM has all of India. Counting the OSM n
 route that our clip does not contain shows 16 of these 56 pairs are answered by leaving the
 area. Those pairs measure the clip boundary rather than the router. They are NOT excluded from
 the statistics here, and excluding them would not rescue the result anyway: median becomes
-1.34% and p95 15.08% over the remaining 40 pairs.
+1.41% and p95 15.45% over the remaining 40 pairs.
 Landmark pairs sit well inside the area and carry no such excuse, which is why
 `gautam-buddha-university to jewar` is the pair that matters most below.
 
@@ -132,13 +132,13 @@ can be looked at rather than argued about.
 | random 26 | 42.32 km | 65.66 km | -35.55% | 11.32% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.27868%2C77.40811%3B28.21551%2C77.73140) |
 | random 6 | 48.98 km | 64.62 km | -24.21% | 20.51% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.07570%2C77.74837%3B28.25312%2C77.43960) |
 | random 18 | 18.71 km | 23.46 km | -20.25% | 7.28% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.56806%2C77.45445%3B28.61120%2C77.57805) |
+| jewar to gaur-city | 73.14 km | 63.49 km | 15.19% | 6.75% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.20165%2C77.62654%3B28.60542%2C77.42744) |
 | random 37 | 67.16 km | 58.50 km | 14.81% | -4.40% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.26473%2C77.40213%3B28.66407%2C77.42792) |
 | random 33 | 71.58 km | 82.40 km | -13.13% | 31.46% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.10370%2C77.70067%3B28.60756%2C77.65509) |
+| random 49 | 22.31 km | 20.07 km | 11.17% | 18.19% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.61024%2C77.30111%3B28.58807%2C77.44692) |
 | random 30 | 39.89 km | 35.89 km | 11.14% | 15.59% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.52758%2C77.48614%3B28.40643%2C77.75969) |
 | dadri to gautam-buddha-university | 18.68 km | 20.90 km | -10.58% | 11.38% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.53873%2C77.53722%3B28.42268%2C77.52464) |
-| random 49 | 22.31 km | 20.37 km | 9.52% | 18.30% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.61024%2C77.30111%3B28.58807%2C77.44692) |
 | random 17 | 58.53 km | 53.59 km | 9.21% | 9.19% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.49369%2C77.35273%3B28.58750%2C77.63125) |
-| random 41 | 49.54 km | 45.68 km | 8.45% | 19.08% | [view](https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=28.47062%2C77.70793%3B28.58226%2C77.35974) |
 
 ## Every comparison, with the reason for each residual
 
@@ -155,7 +155,7 @@ cause is an open question rather than an accepted difference.
 
 | Pair | Kind | Ours km | OSRM km | Dist delta | Ours min | OSRM min | Dur delta | Cause |
 |---|---|---|---|---|---|---|---|---|
-| jewar to gaur-city | landmark | 73.14 | 72.78 | 0.49% | 68.6 | 63.8 | 7.53% | COST MODEL |
+| jewar to gaur-city | landmark | 73.14 | 63.49 | 15.19% | 68.6 | 64.2 | 6.75% | COST MODEL |
 | gaur-city to alpha-1 | landmark | 19.97 | 19.97 | 0.02% | 30.4 | 22.7 | 33.78% | COST MODEL |
 | alpha-1 to surajpur | landmark | 7.72 | 7.71 | 0.12% | 12.1 | 9.5 | 27.04% | COST MODEL |
 | surajpur to dadri | landmark | 7.84 | 7.99 | -1.95% | 12.7 | 10.7 | 18.67% | COST MODEL |
@@ -176,7 +176,7 @@ cause is an open question rather than an accepted difference.
 | random 13 | random | 36.93 | 34.65 | 6.59% | 39.6 | 37.9 | 4.36% | COST MODEL |
 | random 14 | random | 39.50 | 39.51 | -0.03% | 40.6 | 40.2 | 1.05% | COST MODEL |
 | random 15 | random | 81.24 | 82.43 | -1.44% | 99.5 | 87.4 | 13.83% | COST MODEL |
-| random 16 | random | 43.60 | 43.64 | -0.10% | 50.1 | 47.6 | 5.21% | COST MODEL |
+| random 16 | random | 43.90 | 43.64 | 0.60% | 50.5 | 47.6 | 6.06% | COST MODEL |
 | random 17 | random | 58.53 | 53.59 | 9.21% | 79.2 | 72.5 | 9.19% | OUTSIDE AREA |
 | random 18 | random | 18.71 | 23.46 | -20.25% | 34.1 | 31.8 | 7.28% | COST MODEL |
 | random 19 | random | 15.56 | 15.55 | 0.10% | 19.4 | 18.4 | 5.92% | COST MODEL |
@@ -201,7 +201,7 @@ cause is an open question rather than an accepted difference.
 | random 38 | random | 69.91 | 69.68 | 0.33% | 59.0 | 60.1 | -1.80% | COST MODEL |
 | random 39 | random | 57.96 | 58.29 | -0.57% | 48.0 | 51.8 | -7.28% | COST MODEL |
 | random 40 | random | 38.72 | 39.50 | -1.97% | 55.6 | 45.6 | 21.96% | OUTSIDE AREA |
-| random 41 | random | 49.54 | 45.68 | 8.45% | 52.3 | 43.9 | 19.08% | COST MODEL |
+| random 41 | random | 49.54 | 45.76 | 8.25% | 52.3 | 44.7 | 16.92% | COST MODEL |
 | random 42 | random | 72.28 | 76.03 | -4.94% | 77.9 | 68.4 | 13.87% | OUTSIDE AREA |
 | random 43 | random | 32.36 | 35.23 | -8.15% | 43.1 | 36.8 | 17.03% | OUTSIDE AREA |
 | random 44 | random | 76.48 | 77.33 | -1.10% | 60.0 | 65.8 | -8.76% | COST MODEL |
@@ -209,7 +209,7 @@ cause is an open question rather than an accepted difference.
 | random 46 | random | 75.80 | 81.08 | -6.52% | 85.5 | 80.9 | 5.67% | COST MODEL |
 | random 47 | random | 65.54 | 67.66 | -3.13% | 69.3 | 68.7 | 0.86% | COST MODEL |
 | random 48 | random | 44.33 | 47.58 | -6.84% | 46.1 | 41.3 | 11.69% | OUTSIDE AREA |
-| random 49 | random | 22.31 | 20.37 | 9.52% | 31.1 | 26.3 | 18.30% | COST MODEL |
+| random 49 | random | 22.31 | 20.07 | 11.17% | 31.1 | 26.4 | 18.19% | COST MODEL |
 | random 50 | random | 40.94 | 40.42 | 1.30% | 40.9 | 42.4 | -3.55% | COST MODEL |
 
 ### Residuals by cause

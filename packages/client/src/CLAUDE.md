@@ -34,6 +34,10 @@ it never holds the graph.
   shown as a fact is indistinguishable from a fact; a fact shown as an estimate merely understates.
 - **NO FIGURE ABOUT THE DATA IS HARDCODED IN A COMPONENT.** The corpus size in the search readout
   comes from `/health`, because a number typed into a view is wrong the next time the city is built.
+- **THE APPROACH LINE MUST NOT LOOK LIKE ROUTE.** Same accent so it reads as one answer, but dashed,
+  thinner, no casing, drawn from its own GeoJSON source so the dashed paint can never be applied to
+  the driven line by accident. The camera fit includes the true destination, which is otherwise off
+  screen whenever the approach is long.
 - **Callbacks passed into effect dependencies must be `useCallback`-stable.** A fresh closure per
   render tears the map down and rebuilds it on every state update, which reads as flicker rather
   than as a bug.

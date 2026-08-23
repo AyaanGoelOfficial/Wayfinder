@@ -18,13 +18,14 @@ import { createReadStream } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { ROUTES } from '../shared/index.ts';
-import type { ApiError, LngLat, Place, RouteResponse, SearchResponse } from '../shared/index.ts';
+import type { ApiError, Approach, LngLat, Place, RouteResponse, SearchResponse } from '../shared/index.ts';
+import { haversineM } from '../shared/geo.ts';
 import { SnapIndex } from '../engine/snap.ts';
 import { Router } from '../engine/dijkstra.ts';
 import { parseGraphArtifact } from '../engine/graphfile.ts';
 import { buildInstructions } from '../engine/instructions.ts';
 import { PlacesSearch } from '../engine/search.ts';
-import { BUILD_AREA, OBJECTIVE, SNAP_DESTINATION_M, TURN_COST } from '../../config/city.ts';
+import { APPROACH_MIN_M, BUILD_AREA, OBJECTIVE, SNAP_DESTINATION_M, TURN_COST } from '../../config/city.ts';
 
 const DATA = resolve(import.meta.dirname, '../../data');
 const PMTILES = resolve(DATA, 'wayfinder-gn.pmtiles');
@@ -277,9 +278,29 @@ app.get<{ Querystring: { from?: string; to?: string } }>(ROUTES.route, async (re
   const to = parsePoint(req.query.to, 'destination');
   if ('code' in to) return reply.code(to.code === 'OUTSIDE_BUILD_AREA' ? 422 : 400).send(to);
 
+  /**
+   * Snap to a PUBLIC road where one exists, and fall back to a private one only when none does.
+   *
+   * ⛔ THE PENALTY ALONE CANNOT DO THIS, and measuring it is what showed the gap. Sweeping
+   * `privateSecondsPerKm` from 0 to 1800 leaves the Gautam Buddha University approach at 160 m at
+   * every value, because the SNAP picks the nearest edge before the search ever runs, and that edge
+   * is inside the campus. The search penalty stops private roads being used as a THROUGH route; the
+   * snap decides whether the route ends inside a gate at all. Both are needed.
+   *
+   * THE FALLBACK IS NOT OPTIONAL. Measured over the whole places index: 1,428 of 7,650 places snap
+   * to a private edge, and excluding private outright leaves FOUR with no legal edge within
+   * `SNAP_DESTINATION_M`. Those must stay routable, which is what "routable, but only as a last
+   * resort" has meant in `pipeline/graph/CLAUDE.md` since gate 1.
+   *
+   * The gap it opens is not hidden: it becomes the approach path, drawn dashed and stated in metres.
+   */
+  const snapPreferPublic = (p: LngLat): ReturnType<typeof snapIndex.snap> =>
+    snapIndex.snap(p, 'destination', SNAP_DESTINATION_M, { excludePrivate: true }) ??
+    snapIndex.snap(p, 'destination', SNAP_DESTINATION_M);
+
   const tSnap = performance.now();
-  const a = snapIndex.snap(from, 'destination', SNAP_DESTINATION_M);
-  const b = snapIndex.snap(to, 'destination', SNAP_DESTINATION_M);
+  const a = snapPreferPublic(from);
+  const b = snapPreferPublic(to);
   const snapMs = performance.now() - tSnap;
   for (const [s, name] of [[a, 'start'], [b, 'destination']] as const) {
     if (s === null) {
@@ -309,6 +330,21 @@ app.get<{ Querystring: { from?: string; to?: string } }>(ROUTES.route, async (re
     } satisfies ApiError);
   }
 
+  /**
+   * The walking gap between where the driving stops and where the user asked to go.
+   *
+   * Computed from the SNAPPED point the router actually used, never from the route geometry's own
+   * endpoint: those differ by the trim fraction, and using the geometry would draw the line from a
+   * point a metre or two off the road for no reason.
+   */
+  const approachOf = (asked: LngLat, snapped: { point: LngLat }): Approach | undefined => {
+    const metres = haversineM(asked[1], asked[0], snapped.point[1], snapped.point[0]);
+    if (metres < APPROACH_MIN_M) return undefined;
+    return { from: snapped.point, to: asked, metres: Number(metres.toFixed(1)) };
+  };
+  const originApproach = approachOf(from, a!);
+  const destinationApproach = approachOf(to, b!);
+
   const body: RouteResponse = {
     route: {
       id: ++routeId,
@@ -334,6 +370,11 @@ app.get<{ Querystring: { from?: string; to?: string } }>(ROUTES.route, async (re
         edges: r.edges,
         geometry: r.geometry,
       }),
+      // ⛔ NOT added to distanceM, durationS or instructions. A driver cannot drive this, and an
+      // ETA that included it would be wrong. `exactOptionalPropertyTypes` is on, so the key is
+      // omitted entirely rather than set to undefined.
+      ...(originApproach === undefined ? {} : { originApproach }),
+      ...(destinationApproach === undefined ? {} : { destinationApproach }),
       profile: 'driving',
     },
     timingMs: {

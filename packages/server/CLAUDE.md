@@ -27,6 +27,11 @@
 - **The MapLibre style is SERVED from `data/style.json`, never built here.** It is a derivative
   of the tile schema, which `pipeline/` owns. Building it here made a second copy of that schema
   and needed a `pipeline/` import; `build-city` now emits it from the same run as the tiles.
+- **SNAP PREFERRING A PUBLIC ROAD, AND FALL BACK.** `/route` snaps with `excludePrivate` first and
+  retries without it only when no legal edge is in radius. Without the first call a destination
+  inside a gated campus snaps onto the campus road and the route drives in; without the fallback,
+  four places in the index become unroutable. The gap the preference opens is not hidden, it becomes
+  the `Approach` the client draws dashed.
 - **Imports:** `config/`, `shared/`, `engine/`. Never `pipeline/`, never `client/`, and never
   `scripts/`. If the server appears to need something from `pipeline/`, the answer is a new
   artifact written by `build-city`, not an import.

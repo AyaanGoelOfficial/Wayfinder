@@ -116,22 +116,47 @@ console.log('\n--- largest SCC is genuinely strongly connected ---');
 // ---------------------------------------------------------------------------
 // Routing fixtures
 // ---------------------------------------------------------------------------
-console.log('\n--- routing fixtures: snappable, legal, and in the largest SCC ---');
+const fixtureRouter = new Router(graph, buildTurnTable(graph, clipped.relations, vertexOfNodeId, clipped), TURN_COST, OBJECTIVE);
+const fixtureSnaps: { id: string; snap: NonNullable<ReturnType<typeof snapIndex.snap>>; isPrivate: boolean }[] = [];
+console.log('\n--- routing fixtures: snappable, legal, and mutually reachable ---');
 for (const f of ROUTING_FIXTURES) {
   const snap = snapIndex.snap([f.lon, f.lat], 'destination', SNAP_DESTINATION_M);
   if (snap === null) {
     check(false, `${f.id}: snaps within SNAP_DESTINATION_M (${SNAP_DESTINATION_M} m)`, 'no edge found');
     continue;
   }
-  // Every edge in the graph belongs to the largest SCC, because that is all the graph retains.
-  // The structural claim is verified above; this confirms the fixture reaches it.
-  const inScc = snap.edgeId >= 0 && snap.edgeId < graph.edgeFrom.length;
+  // ⛔ THIS USED TO BE A TAUTOLOGY. It asserted `snap.edgeId >= 0 && snap.edgeId < edgeCount`,
+  // which the snapper cannot violate: it only ever returns a valid index, and the null case is
+  // already handled by the `continue` above. It was named "snaps to a largest-SCC edge" and could
+  // not fail. What the fixture actually CLAIMS, in its own `asserts` field, is that it routes to
+  // and from every other routing fixture, so that is what is checked now.
   const isPrivate = graph.edgePrivate[snap.edgeId] === 1;
+  fixtureSnaps.push({ id: f.id, snap, isPrivate });
+}
+
+{
+  let pairsTried = 0;
+  let pairsRouted = 0;
+  const failures: string[] = [];
+  for (const from of fixtureSnaps) {
+    for (const to of fixtureSnaps) {
+      if (from.id === to.id) continue;
+      pairsTried++;
+      const r = fixtureRouter.route(from.snap.edgeId, from.snap.fraction, to.snap.edgeId, to.snap.fraction, {
+        algorithm: 'bidirectional',
+      });
+      if (r === null) failures.push(`${from.id} to ${to.id}`);
+      else pairsRouted++;
+    }
+  }
   check(
-    inScc,
-    `${f.id}: snaps to a largest-SCC edge`,
-    `${snap.distanceM.toFixed(1)} m to edge ${snap.edgeId} (way ${graph.edgeWayId[snap.edgeId]}), private=${isPrivate}`,
+    pairsRouted === pairsTried,
+    'every routing fixture reaches every other one, in both directions',
+    `${pairsRouted}/${pairsTried} ordered pairs routed` + (failures.length > 0 ? `; failed: ${failures.join(', ')}` : ''),
   );
+  for (const f of fixtureSnaps) {
+    console.log(`        ${f.id.padEnd(26)} ${f.snap.distanceM.toFixed(1).padStart(7)} m to way ${graph.edgeWayId[f.snap.edgeId]}, private=${f.isPrivate}`);
+  }
 }
 
 console.log('\n--- the two snap radii are separate code paths, not one tunable ---');
@@ -177,6 +202,48 @@ console.log('\n--- gated campus snaps to a LEGAL edge, not through the private r
         `        nearest edge of any kind is ${anyEdge.distanceM.toFixed(1)} m ` +
           `(private=${graph.edgePrivate[anyEdge.edgeId] === 1}); nearest legal is ${legalOnly.distanceM.toFixed(1)} m`,
       );
+
+      // ⛔ THE HEADING SAYS "not through the private road", SO ROUTE AND CHECK THAT.
+      // This block used to assert only that a legal edge EXISTS within the radius, which is a fact
+      // about geometry and says nothing about routing. It passed for three gates while the router
+      // drove 3.8 km down `access=private` service roads into the campus, because nothing here ever
+      // computed a route. A gate named for a behaviour must exercise that behaviour.
+      const start = ROUTING_FIXTURES.find((x) => x.id === 'pari-chowk') ?? ROUTING_FIXTURES.find((x) => x.id === 'alpha-1');
+      const startSnap = start === undefined ? null : snapIndex.snap([start.lon, start.lat], 'destination', SNAP_DESTINATION_M, { excludePrivate: true });
+      if (startSnap !== null) {
+        const privateKm = (r: ReturnType<typeof fixtureRouter.route>): number => {
+          if (r === null) return Number.NaN;
+          let km = 0;
+          for (const e of r.edges) if (graph.edgePrivate[e] === 1) km += (graph.edgeLengthM[e] as number) / 1000;
+          return km;
+        };
+        // As the product routes it: prefer a public snap, and price private roads.
+        const shipped = fixtureRouter.route(startSnap.edgeId, startSnap.fraction, legalOnly.edgeId, legalOnly.fraction, { algorithm: 'bidirectional' });
+        // CONTROL: the old behaviour, snapping to whatever is nearest with no private penalty. If
+        // this does not drive further on private roads, the assertion above proves nothing, because
+        // the campus was never being entered in the first place.
+        const naive = new Router(graph, buildTurnTable(graph, clipped.relations, vertexOfNodeId, clipped), TURN_COST, {
+          ...OBJECTIVE,
+          privateSecondsPerKm: 0,
+        }).route(startSnap.edgeId, startSnap.fraction, anyEdge.edgeId, anyEdge.fraction, { algorithm: 'bidirectional' });
+        const shippedKm = privateKm(shipped);
+        const naiveKm = privateKm(naive);
+        check(
+          shipped !== null,
+          'gbu: a route to the gate still exists, so the penalty is a penalty and not a ban',
+          shipped === null ? 'no route' : `${(shipped.metres / 1000).toFixed(2)} km`,
+        );
+        check(
+          shippedKm < naiveKm,
+          'gbu: the shipped route drives LESS private road than snapping to the nearest edge with no penalty',
+          `shipped ${shippedKm.toFixed(2)} km private, naive control ${naiveKm.toFixed(2)} km private`,
+        );
+        check(
+          naiveKm > 0,
+          'CONTROL: the naive route really does enter the campus, so the comparison means something',
+          `${naiveKm.toFixed(2)} km of private road on the naive path`,
+        );
+      }
     }
   }
 }

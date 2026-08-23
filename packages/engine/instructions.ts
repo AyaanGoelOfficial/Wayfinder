@@ -42,6 +42,7 @@ export interface InstructionGraph {
   readonly edgeClassRank: Uint8Array;
   readonly edgeNameId: Int32Array;
   readonly edgeRoundabout: Uint8Array;
+  readonly edgeFrom: Int32Array;
   /** Vertex coordinates, read only to tell one divided exit from two separate ones. */
   readonly vertexLat: Float64Array;
   readonly vertexLon: Float64Array;
@@ -166,16 +167,95 @@ function bearingOutOf(geom: readonly LngLat[], at: number): number | null {
   return bearingDeg(geom[at] as LngLat, geom[i] as LngLat);
 }
 
+/** Bearing from one vertex to another, north 0, clockwise. */
+function vertexBearing(g: InstructionGraph, a: number, b: number): number {
+  const dy = (g.vertexLat[b] as number) - (g.vertexLat[a] as number);
+  const dx =
+    ((g.vertexLon[b] as number) - (g.vertexLon[a] as number)) *
+    Math.cos(((g.vertexLat[a] as number) * Math.PI) / 180);
+  return ((Math.atan2(dx, dy) * 180) / Math.PI + 360) % 360;
+}
+
+/**
+ * Which way the road leaving `v` on edge `f` actually heads, walked forward until it has committed.
+ *
+ * The first edge off a roundabout is often a few metres of slip before the road turns to its real
+ * heading, so reading the bearing off that edge alone measures the kerb rather than the road. The
+ * walk follows the longest continuation at each step, never doubling back, until it has covered
+ * `EXIT_BEARING_WALK_M` or run out of road.
+ */
+function exitBearing(g: InstructionGraph, v: number, f: number): number {
+  let cur = f;
+  let end = g.edgeTo[f] as number;
+  let travelled = g.edgeLengthM[f] as number;
+  let guard = 0;
+  while (travelled < EXIT_BEARING_WALK_M && guard++ < 12) {
+    const cs = g.csrOffset[end] as number;
+    const ce = g.csrOffset[end + 1] as number;
+    let next = -1;
+    let longest = -1;
+    for (let c = cs; c < ce; c++) {
+      const h = g.csrEdge[c] as number;
+      // Never turn straight back along the edge just used.
+      if ((g.edgeTo[h] as number) === (g.edgeFrom[cur] as number)) continue;
+      const len = g.edgeLengthM[h] as number;
+      if (len > longest) {
+        longest = len;
+        next = h;
+      }
+    }
+    if (next < 0) break;
+    cur = next;
+    travelled += g.edgeLengthM[next] as number;
+    end = g.edgeTo[next] as number;
+  }
+  return vertexBearing(g, v, end);
+}
+
+/** Smallest angle between two bearings, degrees, always 0 to 180. */
+function bearingGap(a: number, b: number): number {
+  const d = Math.abs(a - b) % 360;
+  return d > 180 ? 360 - d : d;
+}
+
 /** Two turns within this, the same way round, are one corner. See the suppression below. */
 /**
- * Two exit points closer than this around a circle are ONE exit mapped twice.
+ * Two exit points closer than this around a circle are ONE exit, whatever direction they lead.
  *
- * Roughly a carriageway pair plus a median, which is the physical scale of a divided exit meeting
- * a roundabout. Bounded by measurement on both sides rather than chosen: 28.6 m is the smallest
- * gap between exits confirmed genuine on the ground, and 8.4 m is the smallest observed spurious
- * one. 12 m leaves comparable margin against each.
+ * NOT a divided-carriageway test, and the original note here said it was, which was wrong. Measured
+ * over 288 circles: of the 131 adjacent exit pairs closer than 12 m, 84 lead in directions more
+ * than 45 degrees apart, so they are genuinely different roads. The claim this threshold actually
+ * makes is perceptual: two exits less than a car and a half apart are not two exits a driver can
+ * resolve, whichever way they point. Confirmed on the ground at 8.4 m, on a circle where the two
+ * roads differ by 106 degrees and the driver still counts one.
+ *
+ * Divided carriageways are caught by direction instead. See `SAME_ARM_DEG`.
  */
 const SAME_EXIT_M = 12;
+
+/**
+ * Two ADJACENT exits whose roads run within this many degrees of each other are one divided road.
+ *
+ * DERIVED FROM THE CLIP, not from the route that exposed it. Over 288 circles and 732 adjacent
+ * exit pairs the distribution of bearing difference is sharply bimodal:
+ *
+ *     0 to 5 deg   78 pairs        45 to 60 deg    44
+ *     5 to 10      27              60 to 90       175
+ *    10 to 15      11              90 to 180      346
+ *    15 to 45      51  <- trough
+ *
+ * A threshold anywhere in the trough separates the two populations; 15 degrees is where the low
+ * cluster has decayed. It merges 116 of 732 pairs, 85 of them not already merged by proximity.
+ *
+ * WHY DIRECTION AND NOT DISTANCE. The case that exposed this meets the circle 28.7 m apart, which
+ * is an ordinary gap between genuine exits, so no distance rule can catch it without destroying
+ * real counts. The two arms run 657 m and 659 m and rejoin at a shared node, agreeing to 2 m over
+ * 657: independent roads do not do that. Their bearings differ by 3.8 degrees.
+ */
+const SAME_ARM_DEG = 15;
+
+/** How far along an exit road its direction is measured, so a short first edge cannot decide it. */
+const EXIT_BEARING_WALK_M = 120;
 
 const SAME_CORNER_M = 40;
 
@@ -342,13 +422,15 @@ export function buildInstructions(input: InstructionInput): Instruction[] {
       let exits = 0;
       let lastExitLat = Number.NaN;
       let lastExitLon = Number.NaN;
+      let lastExitBearing = Number.NaN;
       while (j < edges.length && g.edgeRoundabout[edges[j] as number] === 1) {
         // An exit exists here when the circle edge's end vertex leads anywhere off the circle.
         const v = g.edgeTo[edges[j] as number] as number;
         const cs = g.csrOffset[v] as number;
         const ce = g.csrOffset[v + 1] as number;
         for (let c = cs; c < ce; c++) {
-          if (g.edgeRoundabout[g.csrEdge[c] as number] !== 1) {
+          const off = g.csrEdge[c] as number;
+          if (g.edgeRoundabout[off] !== 1) {
             // ⛔ ONE PHYSICAL EXIT MAY BE MAPPED AS TWO NODES, and counting both inflates every
             // later exit number by one. A divided exit meets the circle twice, a few metres apart,
             // once per carriageway. Measured on `alpha-1 to surajpur`: two exit nodes 8.4 m apart
@@ -359,12 +441,22 @@ export function buildInstructions(input: InstructionInput): Instruction[] {
             // 8.4 m.
             const lat = g.vertexLat[v] as number;
             const lon = g.vertexLon[v] as number;
-            const sameExit =
+            const bearing = exitBearing(g, v, off);
+            const near =
               Number.isFinite(lastExitLat) &&
               metres([lastExitLon, lastExitLat], [lon, lat]) < SAME_EXIT_M;
-            if (!sameExit) exits++;
+            // ⛔ TWO SEPARATE REASONS, AND THEY CATCH DIFFERENT THINGS. Proximity catches exits a
+            // driver cannot resolve apart, whatever way they lead. DIRECTION catches a divided road
+            // whose two carriageways meet the circle at an ordinary spacing, which no distance rule
+            // can see: the case that exposed it is 28.7 m apart, wider than gaps between genuine
+            // exits elsewhere on the same route. Treating either as the other was the original
+            // mistake, and it produced a right answer on one circle and a wrong one on another.
+            const sameArm =
+              Number.isFinite(lastExitBearing) && bearingGap(lastExitBearing, bearing) < SAME_ARM_DEG;
+            if (!near && !sameArm) exits++;
             lastExitLat = lat;
             lastExitLon = lon;
+            lastExitBearing = bearing;
             break;
           }
         }

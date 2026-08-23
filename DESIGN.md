@@ -909,6 +909,316 @@ exit merge changed, from 4 to 3.
 
 ---
 
+## Exit counting: direction, not distance. Corrected at gate 8 from a five-circle review.
+
+**A review of all five circles on `alpha-1 to surajpur` against Google and by eye gave 3, 1, 2, 2, 3.
+We reported 3, 1, 3, 2, 3.** One disagreement, at circle 3, way 63540337.
+
+### What is actually there
+
+Entry at bearing 168 degrees, then three counted exits:
+
+| # | bearing on circle | gap from previous | leaves onto |
+|---|---|---|---|
+| 1 | 224.5 deg | first | way 1121454230, tertiary, `oneway=no`, 657 m |
+| 2 | 273.1 deg | 28.7 m | way 87156234, tertiary, `oneway=no`, 1491 m |
+| 3 | 296.8 deg | 15.4 m | way 63540351, secondary, `oneway=yes`, the one taken |
+
+**Exits 1 and 2 are two carriageways of one road.** Way 1121454230 ends at node 10257548158, which
+is an interior node of way 87156234. The two arms measure **657 m and 659 m** to that shared node,
+agreeing to 2 m over 657, which independent roads do not do; their separation runs 11 to 52 m; and
+their outbound bearings are **236.9 and 233.1 degrees, 3.8 degrees apart.** A driver sees one road
+heading south west. Google counts one.
+
+### The 12 m rule was right on one circle for the wrong reason
+
+Auditing circle 5 disproved the rationale the earlier threshold was given. Its two exits 8.4 m apart
+lead in directions **106.4 degrees** apart, to genuinely different roads. They are not a divided
+carriageway, and the note claiming they were was wrong. **The distance rule produced a correct count
+there and an incorrect one on circle 3, which is what a coincidence looks like.**
+
+Both rules survive, with separate and now honest justifications:
+
+- **Proximity, under 12 m.** Two exits less than a car and a half apart are not two exits a driver
+  can resolve, whichever way they point. Confirmed on the ground at 8.4 m with a 106 degree
+  difference. Across 288 circles it merges 131 pairs, 84 of which differ by more than 45 degrees.
+- **Direction, under 15 degrees.** Two ADJACENT exits whose roads run the same way are one divided
+  road. This is the only rule that can catch circle 3, whose halves meet the circle 28.7 m apart:
+  wider than gaps between genuine exits elsewhere on the same route, so no distance can separate
+  them without destroying real counts.
+
+### The 15 degrees is measured, not fitted to this route
+
+Over 288 circles and 732 adjacent exit pairs the bearing difference is sharply bimodal:
+
+```
+   0 to 5 deg    78 pairs        45 to 60 deg    44
+   5 to 10       27              60 to 90       175
+  10 to 15       11              90 to 180      346
+  15 to 45       51   <- trough
+```
+
+Any threshold in the trough separates the populations. 15 degrees is where the low cluster has
+decayed; it merges 116 of 732 pairs, **85 of them not already merged by proximity**. Circle 3's pair
+sits at 3.8 degrees, deep inside the cluster.
+
+**What a short stub rule would have cost, since it was a candidate.** Circle 4's first exit is a
+22 m `residential` way, and the ground truth for that circle is exit 2, so that stub MUST count.
+Any rule discarding short or minor exits breaks a circle that is currently correct.
+
+**All five now match: 3, 1, 2, 2, 3**, and the route is unchanged at 7.40 km over 59 edges. Across
+the 56 validation pairs the generator announces 77 roundabouts: exit 1 on 21, exit 2 on 46, exit 3
+on 6, exit 4 on 4.
+
+---
+
+## The re-route p95 rise was the machine, and settled counts prove it. Gate 8.
+
+Urgent re-route p95 moved 9.50 ms to 16.42 ms between two runs, a 73 per cent rise, well inside the
+30 ms budget. Two candidates: machine variance, or the 354 roundabout edges the promotion pass
+added. **Settled-node counts are deterministic and immune to load, so they separate the two without
+argument.**
+
+```
+                      settled p50 / p95, initial route      re-route
+  dijkstra            361,314 / 532,165  ->  unchanged      50,579 / 506,587  ->  unchanged
+  astar               193,809 / 500,204  ->  unchanged      20,074 / 264,701  ->  unchanged
+  bidirectional       173,926 / 365,699  ->  unchanged      14,417 / 239,341  ->  unchanged
+
+  ns per settled node   391 -> 548    506 -> 871    448 -> 682    (initial)
+                        274 -> 387    336 -> 479    290 -> 406    (re-route)
+  load canary           1.13 -> 1.17
+```
+
+**Identical to the digit on every rung and both bands, while time per settled node rose 40 to 90 per
+cent.** The same work took longer; no extra work was done. It is machine variance, and it confirms
+by measurement what the promotion pass was designed to guarantee: `edgeRoundabout` is read by the
+instruction builder and by nothing else, so it cannot reach the search.
+
+---
+
+## Destination approach paths. Built at gate 8.
+
+**Snapping a destination to the nearest legal road and presenting arrival there is a small lie**
+whenever the real place is set back from it, and two fixtures make it concrete: Dadri sits 43.9 m
+from a drivable road, and Gautam Buddha University is inside a gated campus behind `access=private`
+ways, so the route legitimately stops at the gate.
+
+The route now ends where the driving ends, and a **dashed straight line** is drawn from there to the
+point the user actually asked for, at either end of the trip.
+
+- **⛔ It is never part of the driven route.** Excluded from `distanceM`, `durationS` and
+  `instructions`. A driver cannot drive it and an ETA that included it would be wrong.
+- **It is a straight line, not a path.** We have no pedestrian routing, and drawing something that
+  looks routed would imply one.
+- **It is visually distinct before any label is read**: same accent, but dashed, thinner, no casing.
+- **The camera fit includes the true destination**, which is otherwise off screen when the approach
+  is long.
+
+### The threshold is derived from observed snap distances
+
+Over all 7,650 places in the index: median **13.8 m**, p75 26.3, p90 43.8, p99 130, max 462.5. The
+median is the standing-on-the-road population, half a carriageway plus a verge; drawing a line for
+that would be drawing the width of the road.
+
+`APPROACH_MIN_M = 20` sits just above it, and below every fixture where the gap is real:
+
+```
+  alpha-1                   4.5 m   no line   (verified: none drawn)
+  surajpur                 18.7 m   no line
+  gautam-buddha-university 24.7 m   LINE      (verified: 24.7 m, route stops at the campus edge)
+  dadri                    43.9 m   LINE      (verified: 43.9 m)
+  gaur-city                49.6 m   LINE
+  jewar                   141.6 m   LINE      (verified: 141.6 m)
+```
+
+It draws for 35.3 per cent of places. Deliberately far below `SNAP_DESTINATION_M`, which is 500 m
+and answers a different question: how far we will look for a road at all.
+
+### Verified in the browser
+
+Captured once the Chrome DevTools MCP server came back. The failure was not the package and not
+Chrome: the harness had the server cached in `mcp-needs-auth-cache.json` as needing authentication,
+which it does not take, so it was never spawned and the flag survived restarts. Clearing that entry
+fixed it.
+
+```
+Pari Chowk to Gautam Buddha University   7.2 km, 13 min
+  panel     "Then 160 m on foot"          dashed left rule, caption ink
+  map       solid cased route ending on University Internal Road, then a
+            dashed thinner uncased line continuing to the destination
+  console   no errors, no warnings
+```
+
+The dashed segment reads as not-driven before the label is read, which was the requirement.
+
+**Pre-ship checklist, measured under device emulation at 320 px:**
+
+```
+  innerWidth asserted           320 (emulation, not resize)
+  horizontal scroll             none, scrollWidth 320 = clientWidth
+  .approach box                 x 24 to 299, inside rail 12 to 308
+  .approach font-size           12px, from the caption rem token
+  .approach border              dashed 1.6px
+  approach vs status/nav/attribution   no overlap
+  status vs attribution, status vs nav no overlap
+  at 200% text                  no scroll, approach 44 to 279 inside rail right 296, input 238
+```
+
+### OPEN, found while verifying: private roads are not priced
+
+The requirement was that a destination inside a gated campus routes to the public road AT THE GATE.
+**It does not.** The route drives 3.8 km down `University Internal Road`, which is
+`highway=service access=private` on nine of its ways, and stops 160 m from the POI rather than at
+the gate.
+
+The cause is not the approach work. `edgePrivate` is stored in the artifact and is read by
+`snap.ts` behind an `excludePrivate` option and by `gate-fixtures.ts`, and **by nothing else**:
+
+```
+  packages/engine/snap.ts:160   if (excludePrivate && this.g.edgePrivate[e] === 1) continue;
+  scripts/gate-fixtures.ts:129  const isPrivate = graph.edgePrivate[snap.edgeId] === 1;
+```
+
+The router never reads it, so there is no cost difference between a private service road and a
+public one, and `/route` snaps without `excludePrivate`. `packages/pipeline/graph/CLAUDE.md` says
+private is "Routable, but only as a last resort" and the `Graph` interface repeats it. **That last
+resort is unimplemented.**
+
+NOT FIXED HERE. Adding a private penalty changes the cost of every route that touches a private
+way, which is a routing decision rather than a display one, and it interacts with the approach
+threshold: penalising private roads would push the GBU snap out to the gate and turn a 160 m
+approach into a several-hundred-metre one. That is the intended behaviour, but it is a change worth
+making deliberately rather than as a side effect of a UI verification.
+
+---
+
+## Circle 3 reconciled against the junction. Gate 8, diagnostic.
+
+**The junction has four arms and eight connection points, as reported. My earlier dump listed four
+nodes because it walked only the arc the ROUTE traverses, not the circle.** That was a summary
+presented as a full picture, and it is the whole of the discrepancy.
+
+Every vertex on way 63540337, clockwise, which is the direction of travel here:
+
+| bearing | vertex | way | oneway | side | counted |
+|---|---|---|---|---|---|
+| 4.4 | 773 | 63540346 secondary | yes | ENTRY | no |
+| 21.4 | 815 | 63540347 tertiary | yes | EXIT | not on the arc |
+| 81.4 | 743 | 63540350 tertiary | yes | ENTRY | no |
+| 115.7 | 757 | 63217080 secondary | yes | EXIT | not on the arc |
+| 168.0 | 751 | 63540368 secondary | yes | ENTRY | route enters here |
+| 182.3 | 795 | none | | closure node of the closed way | no |
+| 224.5 | 833 | 1121454230 tertiary | no | EXIT and ENTRY | candidate 1 |
+| 273.1 | 747 | 87156234 tertiary | no | EXIT and ENTRY | candidate 2 |
+| 296.8 | 838 | 63540351 secondary | yes | EXIT | candidate 3, route leaves |
+
+**Three entry-only points, five exit-capable points, one bare node: eight attached, nine vertices.**
+
+**Where "three" came from:** the counter walks from the entry at 168.0 to the exit at 296.8 and sees
+three exit-capable vertices on that arc. The four points at 4.4, 21.4, 81.4 and 115.7 are behind the
+driver and are correctly never counted. The direction rule then merges 224.5 and 273.1, whose roads
+run 3.8 degrees apart and rejoin at a shared node, giving **exit 2**.
+
+**Entry-side exclusion is working.** The three one-way-inbound points are classified "not an exit"
+because they have no outgoing non-circle edge, which is the test.
+
+**The bare 182.3 vertex is not a missing exit side.** Only way 63540337 itself touches node
+786730127; it is where the closed way closes.
+
+**The odd-connection test does not work as a signature, and should not be used.** 111 of 322 circles
+(34.5 per cent) have an odd count, but a single-carriageway arm legitimately contributes ONE point,
+and circle 3 has two such arms itself. The test cannot separate a missing side from an undivided
+arm, so a high figure means nothing. NOT TREATED AS EVIDENCE OF A DEFECT.
+
+**Nothing was changed.** The count was already correct and stays correct.
+
+---
+
+## Private roads: two mechanisms, and only one of them is a penalty. Gate 8.
+
+**The defect.** `edgePrivate` has been in the artifact since gate 1, and both
+`pipeline/graph/CLAUDE.md` and the `Graph` interface described private roads as "routable, but only
+as a last resort". Nothing read it: the snapper had an `excludePrivate` option nobody passed, and
+the search never looked at it. A route drove 3.8 km of `access=private` service road into a campus.
+Same class as the toll plaza dodge: free in the model, impossible on the ground.
+
+### The penalty alone cannot fix it, and measuring is what showed that
+
+Sweeping `privateSecondsPerKm` from 0 to 1800 left the GBU approach at 160 m at **every value**. The
+SNAP picks the nearest edge before the search runs, and that edge is inside the campus. So:
+
+- **The snap** decides whether a route ends inside a gate at all.
+- **The penalty** decides whether private road is used as a THROUGH route.
+
+Neither substitutes for the other, and the requirement needs both.
+
+### The snap prefers public, and falls back
+
+`/route` now snaps with `excludePrivate` and falls back to allowing private when no legal edge is in
+radius. **The fallback is not optional:** of 7,650 places, 1,428 snap to a private edge, and
+excluding private outright leaves FOUR with no legal edge within 500 m. Those must stay routable.
+Excluding moves the rest by a median of 36 m and p90 139 m, and the gap becomes the approach path
+rather than a silent lie.
+
+### The penalty, calibrated by sweeping
+
+Over the 56 validation pairs plus the GBU case, with the prefer-public snap in place:
+
+```
+  s/km        0    30    60    90   120   180   240   360   480   600   900  1800
+  privateKm 1.63  1.14  1.14  0.85  0.85  0.85  0.85  0.85  0.85  0.85  0.85  0.85
+  routes       0     2     2     3     3     3     3     3     3     3     3     3
+```
+
+The snap change alone takes private kilometres from 4.95 to 1.63 before any penalty. **The knee is
+90 s/km** and nothing moves above it out to 1800. **Ships at 180**, twice the knee, inside the flat
+region. The remaining 0.85 km is private road that is genuinely the only way in, which is why this
+is a penalty and not a ban.
+
+### GBU, the discriminator
+
+```
+                        before            after
+  route                 7.33 km           7.09 km
+  instructions          11                6          no longer drives through the campus
+  destination approach  24.7 m            374.6 m    the gate
+```
+
+**The threshold interaction is as predicted and is intended.** `APPROACH_MIN_M` at 20 m still
+behaves across the rest: dadri 43.9 m draws, jewar 141.6 m draws, alpha-1 and surajpur draw nothing.
+
+### Validation and benchmark
+
+Distance median **2.15%**, inside its 3% threshold. p95 16.46%. **Exactly one of our 56 routes
+moved:** `random 16`, 43.60 to 43.90 km. The other rows that shifted moved on OSRM's side, not
+ours: `jewar to gaur-city` went 72.78 to 63.49 on their public demo server while ours stayed 73.14,
+which is their answer changing between runs and not a change of ours.
+
+---
+
+## Fixtures that asserted less than their names claimed. Swept at gate 8.
+
+Two found, and they are the same class as a gate that cannot fail.
+
+**1. The gated-campus gate never routed.** Its heading read "gated campus snaps to a LEGAL edge, not
+through the private road", and the assertion was `legalOnly !== null`: that a non-private edge
+EXISTS within 500 m. That is a fact about geometry. **It passed for three gates while the router
+drove 3.8 km down private roads**, because nothing in the block computed a route. It now routes,
+asserts the shipped path drives less private road than a naive snap with no penalty, and carries a
+control proving the naive path really does enter the campus (1.20 km private, against 0.00 shipped).
+
+**2. A per-fixture assertion that could not fail.** Named "snaps to a largest-SCC edge", it asserted
+`snap.edgeId >= 0 && snap.edgeId < edgeFrom.length`. The snapper can only return a valid index and
+the null case was already handled by a `continue` above, so the condition was a tautology. Replaced
+with what the fixture's own `asserts` field claims: **every routing fixture reaches every other one
+in both directions**, 30 ordered pairs.
+
+**The pattern to check for:** an assertion whose subject is narrower than its heading's. Existence
+where the name says behaviour; a bound the code cannot violate; a check with no control beside it.
+
+---
+
 ## The toll price: derived from the tariff. Rebuilt at gate 4, after the first one was a placeholder.
 
 > **SUPERSEDED at gate 6** by the section above. The uniform 2.65 rupees/km recorded here was never

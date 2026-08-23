@@ -30,5 +30,9 @@ assume it exists.
 - **`roadName` is ABSENT, never an empty string, when a way has no name.** Most roads here are
   unnamed, so this is the common case rather than a defect, and an empty string renders as "Turn
   left onto " with a dangling preposition.
+- **`Approach` IS NOT PART OF THE DRIVEN ROUTE.** It is the straight gap between where the driving
+  stops and where the user asked to go, and it must never be folded into `distanceM`, `durationS` or
+  `instructions`: a driver cannot drive it and an ETA including it is wrong. It is a straight line
+  because we have no pedestrian routing, and drawing anything path-shaped would imply one.
 - **Imports:** `config/` only. Never a package, never Node built-ins, never the DOM. This
   file is bundled into the browser.

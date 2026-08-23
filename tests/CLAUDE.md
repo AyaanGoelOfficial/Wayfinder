@@ -20,5 +20,11 @@ Split by intent, and the split matters:
 - **Timing assertions must not be wall-clock flaky.** Assert on operation counts, settled
   nodes, or generous p95 budgets. This machine has 8 cores and 7.7 GB RAM; CI and a throttled
   browser do not.
+- **A GATE MUST BE ABLE TO FAIL, AND MUST ASSERT WHAT ITS NAME CLAIMS.** Two here did not. One was
+  headed "gated campus snaps to a LEGAL edge, not through the private road" and asserted only that
+  a non-private edge EXISTS nearby, never routing; it passed for three gates while the router drove
+  3.8 km down private roads. The other, "snaps to a largest-SCC edge", asserted an edge index was in
+  range, which the snapper cannot violate. When writing or reviewing one, check that the SUBJECT of
+  the assertion is the subject of its name, and that a plausible defect would turn it red.
 - **Imports:** may reach `config/` and any package. Must never reach `tools/` or the network.
   A unit test that hits Overpass or OSRM is not a unit test.

@@ -165,6 +165,20 @@ export interface ObjectiveConfig {
    */
   readonly secondsPerRupee: number;
   /**
+   * Seconds charged per kilometre of `access=private` road. A PENALTY, never a ban.
+   *
+   * The graph has recorded `edgePrivate` since gate 1 and both `pipeline/graph/CLAUDE.md` and the
+   * `Graph` interface described private roads as "routable, but only as a last resort". Nothing
+   * read the flag: the snapper had an `excludePrivate` option nobody passed, and the search never
+   * looked at it at all. A gated campus service road therefore cost exactly what a public road
+   * cost, and a route drove 3.8 km down one.
+   *
+   * SAME CLASS OF DEFECT AS THE TOLL PLAZA DODGE: a manoeuvre free in the model and impossible on
+   * the ground. A ban is the wrong fix, because a destination inside a gated campus must stay
+   * reachable; what has to stop is a private road being used as a THROUGH route.
+   */
+  readonly privateSecondsPerKm?: number | undefined;
+  /**
    * The toll table, one entry per road. Optional: the toy graphs have no toll roads and pass
    * nothing, which restores the behaviour this class had before tolls were priced at all.
    */
@@ -242,6 +256,28 @@ export interface Instruction {
   readonly roundaboutExit?: number;
 }
 
+/**
+ * The gap between where a route physically ends and where the user actually asked to go.
+ *
+ * A destination is snapped to the nearest legal road, and presenting arrival there is a small lie
+ * whenever the real place is set back from it: Dadri sits 43.9 m from a drivable road and Gautam
+ * Buddha University is inside a gated campus behind `access=private` ways, so the route legitimately
+ * stops at the gate.
+ *
+ * ⛔ THIS IS NOT PART OF THE DRIVEN ROUTE, and nothing may quietly fold it in. It is excluded from
+ * `distanceM`, from `durationS`, and from `instructions`, because a driver cannot drive it and an
+ * ETA that includes it is wrong. It is drawn as a DASHED STRAIGHT LINE, never a path: we have no
+ * pedestrian routing and must not imply one by drawing something that looks routed.
+ */
+export interface Approach {
+  /** Where the driving ends: the snapped point on the road. */
+  readonly from: LngLat;
+  /** Where the user actually asked to go. */
+  readonly to: LngLat;
+  /** Straight-line distance. Not a walking distance, and never presented as one. */
+  readonly metres: number;
+}
+
 export interface Route {
   /**
    * Monotonically increasing per server process. The client discards anything that is not
@@ -258,6 +294,13 @@ export interface Route {
   readonly geometry: readonly LngLat[];
   readonly edgeIds: readonly number[];
   readonly instructions: readonly Instruction[];
+  /**
+   * Present only when the start point is further from its snapped road point than
+   * `APPROACH_MIN_M`. Absent is the common case and must render as nothing at all.
+   */
+  readonly originApproach?: Approach;
+  /** Present only when the destination is further from its snapped road point than the threshold. */
+  readonly destinationApproach?: Approach;
   readonly profile: Profile;
   /**
    * What the driver pays in rupees, priced per road by that road's own exact mechanism.

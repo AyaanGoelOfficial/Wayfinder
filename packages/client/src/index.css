@@ -321,6 +321,27 @@ body {
   color: var(--ink-quiet);
 }
 
+/*
+ * The walking approach at either end. Caption type and quiet ink, because it is information about
+ * the trip rather than a step in it, and a dashed rule on the left echoing the dashed map line so
+ * the two read as the same object without a legend.
+ */
+.approach {
+  margin: 0;
+  padding-inline-start: calc(var(--space-unit) / 3);
+  border-inline-start: 2px dashed var(--accent);
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  font-size: var(--text-caption);
+  color: var(--ink-quiet);
+  font-variant-numeric: tabular-nums;
+}
+
+.approach-leg {
+  display: block;
+}
+
 .steps {
   list-style: none;
   margin: 0;

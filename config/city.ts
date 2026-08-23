@@ -587,6 +587,29 @@ export const TOLL_ROADS = [
  */
 export const TOLL_TAGGING_ERRORS = [213101437, 213101624, 1243997952] as const;
 
+/**
+ * How far a point must sit from its snapped road before the approach line is drawn, in metres.
+ *
+ * DERIVED FROM THE OBSERVED SNAP DISTANCES, not chosen. Measured over all 7,650 places in the
+ * index: median 13.8 m, p75 26.3 m, p90 43.8 m, p99 130 m, max 462.5 m. The median is the
+ * "standing on the road" population, which is half a carriageway plus a verge, and drawing a line
+ * for that would be drawing the width of the road.
+ *
+ * 20 m sits just above that median and below every fixture where the gap is real:
+ *
+ *     alpha-1                   4.5 m   on the road, no line
+ *     surajpur                 18.7 m   no line
+ *     gautam-buddha-university 24.7 m   LINE: the route stops at the campus gate
+ *     dadri                    43.9 m   LINE
+ *     gaur-city                49.6 m   LINE
+ *     jewar                   141.6 m   LINE
+ *
+ * It draws for 35.3% of places in the index. Deliberately far below `SNAP_DESTINATION_M`, which is
+ * 500 m and answers a different question: that is how far we will look for a road at all, and by
+ * the time a point is 500 m from one the approach is the story rather than a footnote.
+ */
+export const APPROACH_MIN_M = 20;
+
 export const OBJECTIVE = {
   /**
    * What one extra kilometre is worth, in seconds.
@@ -681,6 +704,39 @@ export const OBJECTIVE = {
    * is what answers "do not put me on a toll road", and no amount of pricing substitutes for it.
    */
   secondsPerRupee: 3600 / DRIVING_COST_RUPEES_PER_HOUR,
+
+  /**
+   * Seconds charged per kilometre of `access=private` road. A PENALTY, never a ban.
+   *
+   * WHY IT EXISTS. The graph has stored `edgePrivate` since gate 1, and both
+   * `pipeline/graph/CLAUDE.md` and the `Graph` interface called private roads "routable, but only
+   * as a last resort". Nothing read the flag: the snapper had an `excludePrivate` option nobody
+   * passed, and the search never looked at it. A gated campus service road cost exactly what a
+   * public road cost, and a route drove 3.8 km down one. Same class of defect as the toll plaza
+   * dodge, and found the same way, by checking whether the thing the docs claimed was actually
+   * wired to anything.
+   *
+   * ⛔ TWO MECHANISMS, AND THE PENALTY IS ONLY ONE OF THEM. Sweeping this constant from 0 to 1800
+   * leaves the Gautam Buddha University approach at 160 m at EVERY value, because the snap picks
+   * the nearest edge before the search runs and that edge is inside the campus. The server snaps
+   * preferring a public road and falls back to private only when no legal edge exists in radius.
+   * This constant stops private roads being used as a THROUGH route; the snap decides whether a
+   * route ends inside a gate at all. Neither substitutes for the other.
+   *
+   * CALIBRATED BY SWEEPING, over the 56 validation pairs plus the GBU case, with the prefer-public
+   * snap in place. Private kilometres driven across all of them:
+   *
+   *     s/km        0    30    60    90   120   180   240   360   480   600   900  1800
+   *     private  1.63  1.14  1.14  0.85  0.85  0.85  0.85  0.85  0.85  0.85  0.85  0.85
+   *     routes      0     2     2     3     3     3     3     3     3     3     3     3
+   *
+   * THE KNEE IS 90 s/km, and nothing changes above it out to 1800. 180 is twice the knee, inside
+   * the flat region. For scale: `secondsPerKm` is 24 and a service road already carries a 3.5
+   * quality weight, so a private service road costs about three times a public one per kilometre.
+   * That is a strong deterrent and not a ban, which matters because the remaining 0.85 km is
+   * private road that is genuinely the only way in.
+   */
+  privateSecondsPerKm: 180,
 
   /** The per-road toll table above, handed to the search. See `TOLL_ROADS` for why it is a table. */
   tollRoads: TOLL_ROADS,

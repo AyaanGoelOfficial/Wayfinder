@@ -122,6 +122,8 @@ export interface RoutableGraph {
   readonly edgeTollGate: Uint8Array;
   /** Which inter-plaza span this edge lies in on a closed-system road; 255 when not applicable. */
   readonly edgeTollSegment: Uint8Array;
+  /** 1 when the underlying way is `access=private`. Priced by the objective, never banned here. */
+  readonly edgePrivate: Uint8Array;
   /** Index into the artifact's road name table, `NAME_NONE` when unnamed. Read only by instructions. */
   readonly edgeNameId: Int32Array;
   /** 1 when the edge is part of a roundabout or circular junction. Read only by instructions. */
@@ -574,6 +576,12 @@ export class Router {
       rupeesPerM[r.id] = r.searchRatePerKm / 1000;
     }
     const secPerRupee = this.obj.secondsPerRupee;
+    const privatePerKm = this.obj.privateSecondsPerKm ?? 0;
+    if (!(privatePerKm >= 0)) {
+      // Same reason turn costs and quality weights are checked at construction: a negative penalty
+      // does not fail loudly, it silently breaks A* admissibility and returns wrong routes.
+      throw new Error(`OBJECTIVE.privateSecondsPerKm is ${privatePerKm}; it must be non-negative or A* is no longer admissible.`);
+    }
     // The quality weight is resolved to a per-metre rate PER CLASS RANK once, here, so the hot
     // loop never indexes a second table. An absent weights array means a flat rate on every class,
     // which is the pre-quality objective and what the toy graphs want.
@@ -592,7 +600,13 @@ export class Router {
       const road = g.edgeTollRoad[e] as number;
       const toll = road === 0 ? 0 : lenM * (rupeesPerM[road] as number) * secPerRupee;
       this.tollSecs[e] = toll;
-      this.secs[e] = drive + dist + toll;
+      // Folded into `distSecs` rather than carried as a fifth component. It IS a distance
+      // preference: a per-kilometre reluctance to use a road, exactly like the class weight beside
+      // it, and `seconds === driveSeconds + distanceSeconds + tollSeconds + turnSeconds` stays an
+      // identity that the equality gate checks. A separate component would have to be threaded
+      // through `finish`, the gate and every report for no gain in meaning.
+      if (g.edgePrivate[e] === 1) this.distSecs[e] = dist + (lenM / 1000) * privatePerKm;
+      this.secs[e] = drive + (this.distSecs[e] as number) + toll;
       const s = g.edgeShape[e] as number;
       const list = this.edgesOfShape.get(s);
       if (list) list.push(e);

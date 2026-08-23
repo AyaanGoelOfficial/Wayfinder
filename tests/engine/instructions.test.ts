@@ -374,6 +374,74 @@ describe('instructions: roundabouts are counted, not narrated', () => {
   });
 });
 
+describe('instructions: a divided arm is one exit, however far apart it meets the circle', () => {
+  /**
+   * The defect this pins: circle 3 of `alpha-1 to surajpur` reported exit 3 where a driver counts
+   * exit 2. Two carriageways of one road meet that roundabout 28.7 m apart, which is WIDER than
+   * gaps between genuine exits elsewhere on the same route, so no distance rule can separate them.
+   * Their arms run 657 m and 659 m and rejoin at a shared node, and their bearings differ by 3.8
+   * degrees. Direction is the discriminator; distance is not.
+   */
+  it('counts two exits heading the same way as one, at a spacing distance cannot reject', () => {
+    const ins = run(
+      [
+        { id: 1, lat: 28.4980, lon: 77.5000 },
+        { id: 10, lat: 28.5000, lon: 77.5000 },
+        { id: 11, lat: 28.5000, lon: 77.5020 },
+        { id: 12, lat: 28.5003, lon: 77.5023 }, // ~40 m further round: too far for the proximity rule
+        { id: 13, lat: 28.5020, lon: 77.5020 },
+        { id: 14, lat: 28.5020, lon: 77.5000 },
+        // Both carriageways of one arm, running east, well separated where they meet the circle.
+        { id: 21, lat: 28.5000, lon: 77.5060 },
+        { id: 22, lat: 28.5003, lon: 77.5063 },
+        { id: 23, lat: 28.5060, lon: 77.5020 },
+        { id: 24, lat: 28.5060, lon: 77.5000 },
+      ],
+      [
+        road(100, [1, 10], { name: 'Approach Road' }),
+        { id: 200, refs: [10, 11, 12, 13, 14, 10], tags: { highway: 'tertiary', junction: 'roundabout' } },
+        road(301, [11, 21], { name: 'Divided Arm North' }),
+        road(302, [12, 22], { name: 'Divided Arm South' }),
+        road(303, [13, 23], { name: 'Second Exit Road' }),
+        road(304, [14, 24], { name: 'Third Exit Road' }),
+      ],
+      [1, 10, 11, 12, 13, 23],
+    );
+    const exit = ins.find((i) => i.type === 'roundabout-exit');
+    // Counting both halves of the eastern arm would read 3.
+    expect(exit?.roundaboutExit).toBe(2);
+  });
+
+  it('still counts two exits heading different ways separately at the same spacing', () => {
+    // CONTROL. Same geometry, but the second road heads north instead of east. Without this the
+    // test above would pass against a rule that merges any two exits 40 m apart.
+    const ins = run(
+      [
+        { id: 1, lat: 28.4980, lon: 77.5000 },
+        { id: 10, lat: 28.5000, lon: 77.5000 },
+        { id: 11, lat: 28.5000, lon: 77.5020 },
+        { id: 12, lat: 28.5003, lon: 77.5023 },
+        { id: 13, lat: 28.5020, lon: 77.5020 },
+        { id: 14, lat: 28.5020, lon: 77.5000 },
+        { id: 21, lat: 28.5000, lon: 77.5060 },
+        { id: 22, lat: 28.5033, lon: 77.5053 }, // north east: 49 deg off the east arm, 41 off the north one
+        { id: 23, lat: 28.5060, lon: 77.5020 },
+        { id: 24, lat: 28.5060, lon: 77.5000 },
+      ],
+      [
+        road(100, [1, 10], { name: 'Approach Road' }),
+        { id: 200, refs: [10, 11, 12, 13, 14, 10], tags: { highway: 'tertiary', junction: 'roundabout' } },
+        road(301, [11, 21], { name: 'East Road' }),
+        road(302, [12, 22], { name: 'North East Road' }),
+        road(303, [13, 23], { name: 'Second Exit Road' }),
+        road(304, [14, 24], { name: 'Third Exit Road' }),
+      ],
+      [1, 10, 11, 12, 13, 23],
+    );
+    expect(ins.find((i) => i.type === 'roundabout-exit')?.roundaboutExit).toBe(3);
+  });
+});
+
 describe('instructions: an unnamed road is the common case here, not an error', () => {
   it('carries no roadName rather than an empty string when the way has no name', () => {
     const ins = run(

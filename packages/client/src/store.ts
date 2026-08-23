@@ -16,7 +16,7 @@ import { create } from 'zustand';
 // Relative, because the client has no path alias and `packages/CLAUDE.md` allows exactly two
 // sources here: `config/` and `shared/`. A bare specifier would need an alias whose only job is to
 // make it look like a package, which is how an accidental `engine/` import gets in later.
-import type { ApiError, Instruction, LngLat, Route, SearchHit, TollDisplay } from '../../shared/index.ts';
+import type { ApiError, Approach, Instruction, LngLat, Route, SearchHit, TollDisplay } from '../../shared/index.ts';
 import { tollDisplayOf } from '../../shared/toll.ts';
 
 /** Milliseconds of quiet before a keystroke becomes a request. */
@@ -46,6 +46,9 @@ export interface RouteView {
   readonly tollRupees: number;
   readonly tollDisplay: TollDisplay;
   readonly tollKm: number;
+  /** The walking gap at each end, when the point is far enough from its road. Never driven. */
+  readonly originApproach: Approach | null;
+  readonly destinationApproach: Approach | null;
 }
 
 interface AppState {
@@ -262,6 +265,10 @@ async function runRoute(from: LngLat, to: LngLat, set: Setter): Promise<void> {
         tollRupees: r.tollCost,
         tollDisplay: agreedDisplay(r),
         tollKm: r.tollMetres / 1000,
+        // Normalised to null here so components never branch on undefined. The server omits the
+        // key entirely when the gap is under the threshold, which is the common case.
+        originApproach: r.originApproach ?? null,
+        destinationApproach: r.destinationApproach ?? null,
       },
     });
   } catch (err) {

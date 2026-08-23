@@ -96,11 +96,17 @@ which is what lets the whole ladder be tested against hand-built toy graphs.
   are the same place, and a careful reader took "enter, 1.3 km" then "exit, 0 m" to mean 1.3 km were
   driven inside the circle. A number that has to be explained is wrong on screen. `roundabout-enter`
   survives only for a route that ENDS on a circle, and must not invent an exit number there.
-- **A DIVIDED EXIT IS ONE EXIT.** It meets the circle twice, once per carriageway, and counting both
-  inflates that exit and every later one. Exit points closer than `SAME_EXIT_M` merge. The threshold
-  is bounded by measurement on both sides: 28.6 m is the smallest gap confirmed genuine on the
-  ground, 8.4 m the smallest observed spurious one, the latter being 14 degrees of arc on a 218 m
-  circle.
+- **TWO EXITS MERGE FOR TWO DIFFERENT REASONS, AND THEY ARE NOT THE SAME RULE.** Proximity, under
+  `SAME_EXIT_M`, says a driver cannot resolve two exits less than a car and a half apart, whichever
+  way they point: confirmed at 8.4 m on a pair whose roads differ by 106 degrees. DIRECTION, under
+  `SAME_ARM_DEG`, says two adjacent exits whose roads run the same way are one divided road: the
+  case that forced it meets the circle 28.7 m apart, wider than gaps between genuine exits on the
+  same route, so no distance rule can catch it. Conflating them gave a right answer on one circle
+  and a wrong one on another. 15 degrees is measured, not fitted: over 288 circles the adjacent-pair
+  bearing difference is bimodal with a cluster under 15 and a trough from 15 to 45.
+- **NEVER DISCARD AN EXIT FOR BEING SHORT OR MINOR.** It was a candidate and it is wrong: a confirmed
+  circle's first exit is a 22 m `residential` way that the driver counts. Class and length say
+  nothing about whether a road is an exit.
 - **A U-TURN PENALTY IS NOT A DIVIDED-ROAD REVERSAL PENALTY, and conflating them would be a defect.**
   `uTurnS` prices the REVERSE TWIN only. Going round a median gap onto the opposite carriageway uses
   a different edge and is never charged by it, correctly: it is legal, it is often the only way to
@@ -111,4 +117,11 @@ which is what lets the whole ladder be tested against hand-built toy graphs.
   runnable so the index's value is measured in the product rather than asserted. It MUST return the
   identical ranking to `search`, and `tests/engine/search.test.ts` enforces that rather than trusting
   the comment.
+- **`edgePrivate` IS PRICED, NOT BANNED, and the penalty is only half the mechanism.**
+  `privateSecondsPerKm` stops a private road being used as a THROUGH route. It cannot stop a route
+  ENDING inside a gate, because the snap picks its edge before the search runs: sweeping the
+  constant from 0 to 1800 left the gated-campus approach at 160 m at every value. The server snaps
+  preferring a public edge and falls back to private only when none is in radius. Measured knee
+  90 s/km, shipped 180. A ban is wrong: 0.85 km of the remaining private road is genuinely the only
+  way in, and four places in the index have no legal edge within 500 m at all.
 - **Imports:** `config/`, `shared/`. Nothing else. No Node built-ins.

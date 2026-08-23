@@ -196,9 +196,12 @@ export function MapView({
       const paint = (): void => {
         const r = useStore.getState().route;
         const src = m.getSource('route') as unknown as { setData: (d: unknown) => void } | undefined;
+        const appSrc = m.getSource('approach') as unknown as { setData: (d: unknown) => void } | undefined;
+        const empty = { type: 'FeatureCollection' as const, features: [] };
         if (r === null) {
           drawnId = -1;
-          if (src !== undefined) src.setData({ type: 'FeatureCollection', features: [] });
+          if (src !== undefined) src.setData(empty);
+          if (appSrc !== undefined) appSrc.setData(empty);
           return;
         }
         if (r.id === drawnId) return;
@@ -213,6 +216,20 @@ export function MapView({
             },
           ],
         };
+        // The approach segments, drawn from their own source so the dashed style cannot be applied
+        // to the driven line by accident. Straight two-point lines: we have no pedestrian routing.
+        const approaches = [r.originApproach, r.destinationApproach]
+          .filter((x): x is NonNullable<typeof x> => x !== null)
+          .map((ap) => ({
+            type: 'Feature' as const,
+            properties: {},
+            geometry: {
+              type: 'LineString' as const,
+              coordinates: [ap.from as [number, number], ap.to as [number, number]],
+            },
+          }));
+        const approachData = { type: 'FeatureCollection' as const, features: approaches };
+
         if (src === undefined) {
           m.addSource('route', { type: 'geojson', data: line });
           m.addLayer({ ...ROUTE_LAYERS.casing, source: 'route' } as never);
@@ -220,11 +237,23 @@ export function MapView({
         } else {
           src.setData(line);
         }
+        if (appSrc === undefined) {
+          m.addSource('approach', { type: 'geojson', data: approachData });
+          m.addLayer({ ...ROUTE_LAYERS.approach, source: 'approach' } as never);
+        } else {
+          appSrc.setData(approachData);
+        }
         let minLon = Infinity;
         let minLat = Infinity;
         let maxLon = -Infinity;
         let maxLat = -Infinity;
-        for (const [lon, lat] of r.geometry) {
+        const fitPoints: [number, number][] = [...(r.geometry as [number, number][])];
+        for (const ap of [r.originApproach, r.destinationApproach]) {
+          // The true destination is what the user asked for, so it must be on screen even though
+          // nothing is driven to it.
+          if (ap !== null) fitPoints.push(ap.to as [number, number]);
+        }
+        for (const [lon, lat] of fitPoints) {
           if (lon < minLon) minLon = lon;
           if (lat < minLat) minLat = lat;
           if (lon > maxLon) maxLon = lon;
