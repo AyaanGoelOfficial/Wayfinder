@@ -175,6 +175,60 @@ export class SnapIndex {
     };
   }
 
+  /**
+   * EVERY edge within `maxDistanceM`, nearest first, capped at `limit`.
+   *
+   * ADDED AT GATE 8 for the free-drive map matcher, which cannot use `snap` above: `snap` returns
+   * the single nearest edge, and the nearest edge is the WRONG ANSWER most of the time on this
+   * network. `npm run calibrate:tracking` measured that 71.9% of one-way road samples have an
+   * opposing carriageway inside `SNAP_TRACKING_M`, at a median separation of 19.39 m. A matcher
+   * that only ever sees the winner cannot apply a heading gate or weigh a transition, so it
+   * cannot tell the two carriageways apart at all. It needs the whole candidate set.
+   *
+   * Deliberately does NOT filter by heading or plausibility itself. This class knows about
+   * geometry; which candidate is credible is the matcher's judgement, and mixing the two would
+   * put a routing decision inside the spatial index.
+   */
+  candidates(point: LngLat, maxDistanceM: number, limit: number): readonly SnapResult[] {
+    const [lon, lat] = point;
+    const found: { edge: number; d: number; plat: number; plon: number; frac: number }[] = [];
+    const maxRing = Math.ceil(maxDistanceM / (CELL_DEG * 111_320)) + 1;
+    const r0 = this.rowOf(lat);
+    const c0 = this.colOf(lon);
+    const seen = new Set<number>();
+
+    // No early break on ring here: unlike `snap`, we want everything inside the radius, not the
+    // first thing that cannot be beaten.
+    for (let ring = 0; ring <= maxRing; ring++) {
+      for (let r = r0 - ring; r <= r0 + ring; r++) {
+        if (r < 0 || r >= this.rows) continue;
+        for (let c = c0 - ring; c <= c0 + ring; c++) {
+          if (c < 0 || c >= this.cols) continue;
+          if (ring > 0 && Math.abs(r - r0) !== ring && Math.abs(c - c0) !== ring) continue;
+          const cell = r * this.cols + c;
+          const from = this.cellStart[cell] as number;
+          const to = this.cellStart[cell + 1] as number;
+          for (let i = from; i < to; i++) {
+            const e = this.cellEdges[i] as number;
+            if (seen.has(e)) continue;
+            seen.add(e);
+            const cand = this.projectOntoEdge(e, lat, lon);
+            if (cand.d <= maxDistanceM) found.push({ edge: e, ...cand });
+          }
+        }
+      }
+    }
+
+    found.sort((a, b) => a.d - b.d);
+    return found.slice(0, limit).map((f) => ({
+      point: [f.plon, f.plat] as LngLat,
+      edgeId: f.edge,
+      fraction: f.frac,
+      distanceM: f.d,
+      purpose: 'tracking' as SnapPurpose,
+    }));
+  }
+
   /** Closest point on one edge's polyline, with the fraction along its full shape. */
   private projectOntoEdge(e: number, lat: number, lon: number): { d: number; plat: number; plon: number; frac: number } {
     const g = this.g;

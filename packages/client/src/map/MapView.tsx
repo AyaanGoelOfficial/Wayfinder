@@ -14,30 +14,27 @@ import { AttributionControl, Map as MapLibreMap, NavigationControl, addProtocol 
 import type { MapOptions } from 'maplibre-gl';
 import { Protocol } from 'pmtiles';
 import { ROUTE_LAYERS } from './routeLayers.ts';
-import { useStore } from '../store.ts';
+import { TRACKING_LAYERS, chevronImage } from './trackingLayers.ts';
+import { onTrackingFrame, useStore } from '../store.ts';
+import { CAMERA } from '@config/city.ts';
+import { haversineM } from '@wayfinder/shared/geo.ts';
+
 import 'maplibre-gl/dist/maplibre-gl.css';
+
+/**
+ * How far the dot may travel before the covered line is redrawn, in metres.
+ *
+ * Bounds the gap between the end of the grey line and the vehicle. 3 m is about 4 px at zoom 17
+ * in this city, under the threshold at which a line end reads as detached, and it costs about
+ * five source updates a second at cruising speed rather than sixty.
+ */
+const COVERED_RESOLUTION_M = 3;
 
 type StyleSpec = Exclude<MapOptions['style'], string | undefined>;
 
 export type MapStatus =
   | { readonly kind: 'loading' }
   | { readonly kind: 'ready'; readonly zoom: number; readonly center: readonly [number, number] }
-  | { readonly kind: 'error'; readonly message: string };
-
-/**
- * The route is its OWN channel, not a variant of `MapStatus`. Two bugs came from sharing one.
- *
- * The summary was a `MapStatus` variant, so `moveend`, which fires on the initial hash jump and on
- * every pan, overwrote the route distance and time with the zoom readout. Panning made the summary
- * vanish, and which one you saw depended on whether the route fetch resolved before the first
- * `moveend`, so a screenshot could show either and neither was reproducible.
- *
- * Route FAILURES went down the map's error path too, which put "The map could not load" above a
- * message about an out-of-area destination. The map had loaded fine. A remedy is only useful if it
- * names the thing that actually failed, so the two failures are now separate states.
- */
-export type RouteState =
-  | { readonly kind: 'route'; readonly km: number; readonly minutes: number; readonly points: number }
   | { readonly kind: 'error'; readonly message: string };
 
 /**
@@ -69,13 +66,7 @@ function absolutizePmtiles(style: StyleSpec): StyleSpec {
   return style;
 }
 
-export function MapView({
-  onStatus,
-  onRoute,
-}: {
-  readonly onStatus: (s: MapStatus) => void;
-  readonly onRoute: (r: RouteState) => void;
-}): ReactElement {
+export function MapView({ onStatus }: { readonly onStatus: (s: MapStatus) => void }): ReactElement {
   const container = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -144,48 +135,6 @@ export function MapView({
       }
 
       /**
-       * Draws a route when the URL carries ?from=lon,lat&to=lon,lat.
-       *
-       * Deliberately URL-driven for now: gate 3 needs a reproducible cross-city route to
-       * screenshot, and a link is reproducible in a way "I clicked two places" is not. The
-       * search-and-tap flow arrives with the UI that needs it.
-       */
-      const drawRoute = async (): Promise<void> => {
-        const q = new URLSearchParams(window.location.search);
-        const fromQ = q.get('from');
-        const toQ = q.get('to');
-        if (fromQ === null || toQ === null) return;
-        const res = await fetch(`/route?from=${encodeURIComponent(fromQ)}&to=${encodeURIComponent(toQ)}`);
-        if (!res.ok) {
-          // The server's own message carries the remedy, per shared/'s structured error contract.
-          // Reported on the ROUTE channel: the map is fine, the route is not.
-          const err = (await res.json().catch(() => null)) as { message?: string } | null;
-          onRoute({ kind: 'error', message: err?.message ?? `Route failed with status ${res.status}.` });
-          return;
-        }
-        const body = (await res.json()) as {
-          route: { geometry: [number, number][]; distanceM: number; durationS: number; id: number };
-        };
-        const line = {
-          type: 'FeatureCollection' as const,
-          features: [{ type: 'Feature' as const, properties: {}, geometry: { type: 'LineString' as const, coordinates: body.route.geometry } }],
-        };
-        if (m.getSource('route') === undefined) {
-          m.addSource('route', { type: 'geojson', data: line });
-          m.addLayer({ ...ROUTE_LAYERS.casing, source: 'route' } as never);
-          m.addLayer({ ...ROUTE_LAYERS.line, source: 'route' } as never);
-        } else {
-          (m.getSource('route') as unknown as { setData: (d: unknown) => void }).setData(line);
-        }
-        onRoute({
-          kind: 'route',
-          km: body.route.distanceM / 1000,
-          minutes: body.route.durationS / 60,
-          points: body.route.geometry.length,
-        });
-      };
-
-      /**
        * Draws whatever route the store currently holds, and clears the line when it holds none.
        *
        * Subscribed rather than polled, and keyed on `route.id`, which is the monotonic id the
@@ -232,14 +181,17 @@ export function MapView({
 
         if (src === undefined) {
           m.addSource('route', { type: 'geojson', data: line });
-          m.addLayer({ ...ROUTE_LAYERS.casing, source: 'route' } as never);
-          m.addLayer({ ...ROUTE_LAYERS.line, source: 'route' } as never);
+          // BENEATH THE TRACKING STACK. The route line is 9 px wide at z15 and the dot is 8, so a
+          // route added on top hides the dot completely. It did: the first navigation screenshot
+          // had a working camera, a working banner, and no visible vehicle anywhere on screen.
+          m.addLayer({ ...ROUTE_LAYERS.casing, source: 'route' } as never, routeAnchor());
+          m.addLayer({ ...ROUTE_LAYERS.line, source: 'route' } as never, routeAnchor());
         } else {
           src.setData(line);
         }
         if (appSrc === undefined) {
           m.addSource('approach', { type: 'geojson', data: approachData });
-          m.addLayer({ ...ROUTE_LAYERS.approach, source: 'approach' } as never);
+          m.addLayer({ ...ROUTE_LAYERS.approach, source: 'approach' } as never, routeAnchor());
         } else {
           appSrc.setData(approachData);
         }
@@ -274,9 +226,183 @@ export function MapView({
       const unsubscribe = useStore.subscribe(paint);
       unsubscribers.push(unsubscribe);
 
+      /**
+       * The tracking layers, and the frame loop that drives them.
+       *
+       * WRITTEN STRAIGHT INTO MAPLIBRE, never through React. The dot moves every frame and the
+       * banner does not, so they travel on different channels: `onTrackingFrame` here, and the
+       * store's coarse slice for anything a person reads. A `setState` per frame would re-render
+       * the search field sixty times a second to say what it already said.
+       */
+      const empty = { type: 'FeatureCollection' as const, features: [] };
+
+      /**
+       * The id everything non-tracking is inserted BEFORE, so the vehicle is always on top.
+       *
+       * Returns undefined until the tracking stack exists, which is what `addLayer` wants when
+       * there is nothing to insert before. Passing a `beforeId` naming a layer that does not
+       * exist makes MapLibre drop the layer and report it on the ERROR CHANNEL rather than
+       * throwing, so the caller sees success and the layer is simply missing. That is exactly how
+       * `route-covered` went absent while its source sat there looking healthy.
+       */
+      const belowTracking = (): string | undefined =>
+        m.getLayer(TRACKING_LAYERS.accuracy.id) === undefined ? undefined : TRACKING_LAYERS.accuracy.id;
+
+      /**
+       * Where the driven route line goes: below the GREY COVERED line as well as below the dot.
+       *
+       * The full stack, bottom to top, and every position is load bearing:
+       *
+       *   route-casing, route-line, route-approach   the route as planned
+       *   route-covered                              the part already driven, grey, over the blue
+       *   tracking-accuracy .. tracking-heading      the vehicle, over everything
+       *
+       * Anchoring the route at `belowTracking()` alone would place it ABOVE `route-covered`, and
+       * the grey progress line would then be painted over by the blue one it is meant to cover.
+       */
+      const routeAnchor = (): string | undefined =>
+        m.getLayer(TRACKING_LAYERS.covered.id) !== undefined ? TRACKING_LAYERS.covered.id : belowTracking();
+
+      const addTrackingLayers = (): void => {
+        if (!m.hasImage('tracking-chevron')) m.addImage('tracking-chevron', chevronImage());
+        if (m.getSource('tracking') === undefined) {
+          m.addSource('tracking', { type: 'geojson', data: empty });
+          m.addLayer({ ...TRACKING_LAYERS.accuracy, source: 'tracking' } as never);
+          m.addLayer({ ...TRACKING_LAYERS.dotCasing, source: 'tracking' } as never);
+          m.addLayer({ ...TRACKING_LAYERS.dot, source: 'tracking' } as never);
+          m.addLayer({ ...TRACKING_LAYERS.heading, source: 'tracking' } as never);
+        }
+        if (m.getSource('route-covered') === undefined) {
+          m.addSource('route-covered', { type: 'geojson', data: empty });
+          // Beneath the tracking stack, above the route line, so the driven part greys out under
+          // a dot that stays visible.
+          m.addLayer({ ...TRACKING_LAYERS.covered, source: 'route-covered' } as never, belowTracking());
+        }
+      };
+
+      /**
+       * Follow mode is dropped by a USER gesture only.
+       *
+       * MapLibre fires the same `dragstart` for a programmatic `jumpTo` as for a finger, and the
+       * discriminator is `originalEvent`: present for a real input, absent for our own camera
+       * write. Without that check the chase camera cancels itself on its first frame.
+       */
+      const breakFollow = (e: { originalEvent?: unknown }): void => {
+        if (e.originalEvent === undefined) return;
+        if (useStore.getState().tracking.following) useStore.getState().setFollowing(false);
+      };
+      m.on('dragstart', breakFollow);
+      m.on('rotatestart', breakFollow);
+      m.on('pitchstart', breakFollow);
+
+      // Camera state, eased here rather than in the engine: bearing and zoom are presentation,
+      // and the engine has no opinion about how a map is framed.
+      // Annotated, because `CAMERA` is `as const` and would otherwise infer the literal 17.5.
+      let camBearing = 0;
+      let camZoom: number = CAMERA.zoomAtRest;
+      let camReady = false;
+      let lastCoveredIndex = -1;
+      let lastCoveredPoint: readonly [number, number] | null = null;
+      let lastFrameAt = performance.now();
+
+      const unsubFrame = onTrackingFrame((snap) => {
+        const src = m.getSource('tracking') as unknown as { setData: (d: unknown) => void } | undefined;
+        if (src === undefined) return;
+        if (snap.display === null) {
+          src.setData(empty);
+          camReady = false;
+          return;
+        }
+        src.setData({
+          type: 'FeatureCollection',
+          features: [
+            {
+              type: 'Feature',
+              properties: { accuracyM: snap.accuracyM, bearing: snap.displayBearingDeg },
+              geometry: { type: 'Point', coordinates: snap.display as [number, number] },
+            },
+          ],
+        });
+
+        /**
+         * The covered line, redrawn on DISTANCE rather than on vertex index.
+         *
+         * Keying it on `coveredIndex` alone was wrong and the browser gate's own screenshot showed
+         * it: route vertices are up to 217 m apart at p99, so between two of them the grey line
+         * kept the endpoint it was given when the index last changed while the dot drove on. It
+         * was measured at 195 m adrift, which on screen is a grey line that visibly stops short of
+         * the vehicle.
+         *
+         * Redrawing every frame would re-serialise the whole driven prefix at display rate, which
+         * on a long route is thousands of coordinates per frame for no visible gain. So it is
+         * redrawn whenever the index changes OR the dot has moved more than
+         * `COVERED_RESOLUTION_M` since the last redraw. That bounds the visible error to 3 m,
+         * about 4 px at zoom 17, while costing roughly five updates a second at cruising speed
+         * instead of sixty.
+         */
+        const covered = snap.progress?.coveredIndex ?? -1;
+        const movedSinceCovered =
+          lastCoveredPoint === null
+            ? Infinity
+            : haversineM(lastCoveredPoint[1], lastCoveredPoint[0], snap.display[1], snap.display[0]);
+        if (covered !== lastCoveredIndex || movedSinceCovered > COVERED_RESOLUTION_M) {
+          lastCoveredIndex = covered;
+          lastCoveredPoint = snap.display;
+          const r = useStore.getState().route;
+          const cSrc = m.getSource('route-covered') as unknown as { setData: (d: unknown) => void } | undefined;
+          if (cSrc !== undefined) {
+            const coords =
+              r === null || covered < 1
+                ? []
+                : [...(r.geometry.slice(0, covered + 1) as [number, number][]), snap.display as [number, number]];
+            cSrc.setData(
+              coords.length < 2
+                ? empty
+                : {
+                    type: 'FeatureCollection',
+                    features: [
+                      { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } },
+                    ],
+                  },
+            );
+          }
+        }
+
+        if (!useStore.getState().tracking.following) return;
+
+        const now = performance.now();
+        const dt = now - lastFrameAt;
+        lastFrameAt = now;
+        // Speed-based zoom: closer when slow because the next decision is near, wider at speed
+        // because it is far. Clamped outside the two anchors in config.
+        const t = Math.max(
+          0,
+          Math.min(1, (snap.speedMps - CAMERA.zoomAtRestSpeedMps) / (CAMERA.zoomAtCruiseSpeedMps - CAMERA.zoomAtRestSpeedMps)),
+        );
+        const targetZoom = CAMERA.zoomAtRest + t * (CAMERA.zoomAtCruise - CAMERA.zoomAtRest);
+        const alpha = 1 - Math.exp(-Math.max(0, dt) / CAMERA.easeTauMs);
+        if (!camReady) {
+          camBearing = snap.displayBearingDeg;
+          camZoom = targetZoom;
+          camReady = true;
+        } else {
+          // Rotate the short way, so 350 to 10 crosses north rather than spinning backwards.
+          const delta = ((snap.displayBearingDeg - camBearing + 540) % 360) - 180;
+          camBearing = (camBearing + delta * alpha + 360) % 360;
+          camZoom += (targetZoom - camZoom) * alpha;
+        }
+        m.jumpTo({
+          center: snap.display as [number, number],
+          bearing: camBearing,
+          pitch: CAMERA.pitchDeg,
+          zoom: camZoom,
+        });
+      });
+      unsubscribers.push(unsubFrame);
+
       m.on('load', () => {
+        addTrackingLayers();
         report();
-        void drawRoute();
         paint();
       });
       m.on('moveend', report);
@@ -293,7 +419,7 @@ export function MapView({
       for (const off of unsubscribers) off();
       map?.remove();
     };
-  }, [onStatus, onRoute]);
+  }, [onStatus]);
 
   return <div className="map" ref={container} role="application" aria-label="Map of Greater Noida" />;
 }

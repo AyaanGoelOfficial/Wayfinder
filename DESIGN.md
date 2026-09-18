@@ -1759,3 +1759,183 @@ Measured with Chrome DevTools at 4x CPU throttle: a requested 100 ms interval fi
 driven by fix `timestamp` deltas and never by an assumed 1 Hz cadence. Code that assumes
 cadence passes on this laptop and jitters on the target device, which is the hardest place to
 notice it.
+
+## Tracking. The measurement that decided the matcher. Gate 8.
+
+**One number determines the whole design, and it is not a preference.** How close do the two
+carriageways of a divided road get in Greater Noida? `npm run calibrate:tracking` measures it over
+the real clip, across every pair of antiparallel one-way segments that belong to DIFFERENT ways:
+
+```
+                             pairs      min     p1     p5    p25    p50    p90
+all one-way pairs           70,773     1.75   5.96   8.01  12.67  20.65  65.06   metres
+roundabout edges excluded   66,359     1.75   5.88   7.91  12.31  19.39  60.19   metres
+```
+
+The second row is the control. A roundabout is a one-way circle whose own far side is antiparallel
+and close, so it would fake exactly this signal; removing roundabout edges from both sides moves p5
+by 0.10 m and the median by 1.26 m. **The tight separations are real divided carriageways, not
+circles.**
+
+**What that forces.** To stay on one side by distance alone the matching corridor would have to be
+under **4 m** at p5. No consumer GPS fix is that good. So distance cannot disambiguate carriageways
+here at all, and the exposure is not a corner case:
+
+```
+one-way samples with an opposing carriageway inside SNAP_TRACKING_M   52,148   71.9%
+bearing gap of those confusable pairs        min 150.0   p5 156.7   p50 178.8   max 180.0 deg
+```
+
+Nearly three quarters of the one-way network is confusable by proximity, and every confusable pair
+is opposed by at least 150 degrees. **Heading therefore GATES the candidates and distance only ranks
+the survivors.** That is the inverse of the obvious nearest-point matcher, and a nearest-point
+matcher would fail precision charter item 3 across most of the network rather than occasionally.
+
+The gate is 60 degrees: it rejects every measured confusable pair with 90 degrees of margin, while
+tolerating GPS heading noise and the curvature inside one shape segment. Above 75 it would begin
+admitting the tightest measured pair.
+
+**Verified on the live graph, not just in the abstract.** At the fixture site the two directions of
+travel resolve to edges **33658** and **33785**, 127 apart in the edge table and therefore separate
+ways rather than the forward and reverse of one two-way street. Both at 0.91 posterior.
+
+## The three defects only the browser gate found. Gate 8.
+
+Unit tests passed on all three. They are recorded because each one is a class of mistake, not a
+typo, and because the pattern is the same in every case: **the fixture was gentler than reality.**
+
+**1. The implied-speed filter rejected over half of an ordinary drive.** `verify:browser` reported
+581 of 1,121 fixes discarded on an 8 m noise trace. Cause: the filter compared raw positions, and at
+the 96 ms interval in that trace a vehicle travelling 1.3 m is displaced about 11 m by noise, which
+reads as 420 km/h. The unit tests missed it because every fixture here stepped at 250 ms or more.
+Fix: a fix is impossible only if it is impossible ALLOWING FOR ITS OWN STATED ACCURACY, so both
+fixes' `accuracyM` is subtracted before the speed is computed. The 150 km/h ceiling is untouched.
+
+**2. The simulator was misreporting accuracy, which is what made the above visible.** It reported
+`sigma * 1.2`. The W3C Geolocation spec defines `accuracy` as a **95% confidence radius**, which for
+circular Gaussian error is `sigma * sqrt(-2 ln 0.05) = 2.4477 sigma`. The simulated receiver was
+claiming roughly twice the precision it had, so the filter was allowed to subtract far less
+uncertainty than the trace actually contained. After the correction: **0 of 1,121 rejected.**
+
+**3. The covered line lagged the vehicle by up to 195 m.** The grey already-driven line was rebuilt
+only when the route's vertex index changed, and route vertices are up to 217 m apart at p99, so
+between two of them the line kept a stale endpoint while the dot drove on. Measured at 195.42 m
+adrift. Fix: redraw on DISTANCE as well as index, bounded by `COVERED_RESOLUTION_M` = 3 m. Verified
+at 2.56 m worst case over 90 sampled frames, at about five source updates a second instead of sixty.
+
+**Two more, found by looking at the screenshot rather than by any assertion.** The dot did not
+render at all in the first navigation capture: `tracking-accuracy` and `route-covered` were absent
+from the style because MapLibre rejects `["zoom"]` used as arithmetic rather than as the input to a
+top-level `interpolate`, and it reports that on the map's ERROR CHANNEL instead of throwing, so
+`addLayer` returned normally. The route layers were also added ABOVE the tracking layers, so the
+9 px route line covered the 8 px dot. Neither is visible to a test that queries state; both are
+obvious in a picture. **The lesson is that a screenshot is a different instrument from an
+assertion, and gate 8 needed both.**
+
+## Where the tracking engine lives, and why it is split. Gate 8.
+
+`packages/CLAUDE.md` lets the client import `config/` and `shared/` and nothing else, because the
+engine holds hundreds of MB of typed arrays. That splits tracking in two, along a line that turns
+out to be the right one anyway:
+
+```
+on-route matching    shared/tracking.ts     needs only the route polyline the client already has
+                                            zero round trip, works offline, no graph to test with
+free-drive matching  engine/mapmatch.ts     needs the spatial index over 532,951 directed edges
+                                            server side, behind POST /match
+```
+
+The engine half contains **no browser anything**: no timers, no `Date.now()`, no rAF, no DOM. Time
+enters as fix timestamps and as an explicit `nowMs` argument. That is the single decision that makes
+the whole thing testable against synthetic traces AND immune to the timer unreliability recorded at
+gate 0, where a requested 100 ms interval fired at 188, 315, 253 and 117 ms under 4x throttle.
+
+The frame loop is the only browser-shaped part, and it carries two channels on purpose: the dot and
+the camera are written straight into MapLibre every frame, while only COARSE state, what a person
+reads, reaches the store. A store write per frame would re-render the whole rail at 60 Hz to say
+what it already said.
+
+## `verify:browser`, and why it has no puppeteer. Gate 8.
+
+It speaks the Chrome DevTools Protocol directly over the WebSocket client built into Node 22 and
+later. A project that writes its own router, its own tiles and its own places index does not need a
+browser automation dependency to drive a page, and doing it by hand keeps the gate honest: every
+assertion is something it asked the browser for and read back.
+
+**The scenarios are SCRIPTED, not simulated.** Fixes are pushed through a DEV-only
+`window.__tracking` hook with exact timestamps, and the gate supplies the frame clock, so a scenario
+is a pure function of its trace and reruns identically. Driving the real simulator would assert
+against whatever the machine's timers did, which is precisely what gate 0 measured as unreliable.
+
+Result at gate 8 close: **32 checks, 0 failing**, covering charter items 2, 3, 4, 6 and 10. Items 1,
+2, 8 are covered by `gate:equality` and the golden fixtures; 7 and 9 by the toy-graph suite and SCC
+filtering; 11 by `gate:equality` across every rung and restriction site. The throttled figures are
+in the next section, because the first version of them rested on an argument that turned out to be
+invalid.
+
+## The throttled frame cost, and when a verdict may be withheld. Gate 8.
+
+`verify:browser` has a THIRD result state beside PASS and FAIL: NOTE, meaning reported without a
+verdict. It is the honest alternative to two worse options, passing a number the instrument cannot
+support or quietly not printing it, and it is allowed ONLY with a positive attribution argument
+produced by the same run and printed beside the number (`hard-rules.md` § Measurement). The history
+below is kept because the first argument offered for it was wrong in an instructive way.
+
+**What was claimed first.** Five consecutive runs of IDENTICAL code at 6x CPU throttle:
+
+```
+  median 16.0   p99 49.0   max 95.4   2 frames over 50 ms, at 41 and 230
+  median 16.2   p99 30.4   max 31.8   none
+  median 13.4   p99 46.1   max 64.9   2 frames over 50 ms, at 116 and 118
+  median 13.8   p99 50.2   max 99.4   3 frames over 50 ms, at 131, 165 and 229
+  median  6.6   p99 34.5   max 37.4   none
+```
+
+The argument offered was that the perf loop injects a fix every 60 frames, so a systematic cost in
+the matching path would put slow frames on indices divisible by 60, and none of the seven did.
+
+**Why that argument was invalid.** The injection sat OUTSIDE the timed region: the loop called
+`injectFix` and only then started the clock around `step`. The matching was never measured at all,
+and a "fix frame" did no more timed work than any other frame, so "slow frames avoid fix frames"
+was a pattern the code under test could not have failed. An attribution argument that cannot fail
+is not evidence. Found while mechanising the NOTE rule, before any of it was committed.
+
+**What replaced it.** Three changes, each closing a specific gap:
+
+```
+1. the injection is timed separately   it is a separate task in the app, the geolocation callback
+2. the drive is REPLAYED               scripted mode is a pure function of its trace, so frame j
+                                       does identical work in both executions. Slow once and fast
+                                       on replay means the work is not what is slow
+3. collections are TRACED              a Chrome trace of the page's main thread. A collection is
+                                       the page's own allocation, never an external cause, so a
+                                       frame whose GC time accounts for the crossing is a FAIL
+```
+
+The GC instrument has its own positive control, and the control needed fixing too: a burst of
+400,000 RETAINED objects produced no collection at all at 6x, because V8 saw them survive and
+pretenured the allocation site straight into old space. The control now writes 2,000,000
+short-lived objects through a small ring, which escape (so cannot be optimised away) and die young
+(so cannot be pretenured). It then saw 70 collection events. Without a live control every slow
+frame is unattributable and the check FAILS, which is how the first run of the new instrument
+reported, correctly.
+
+**What the corrected instrument measured**, four runs, upper bounds from this machine:
+
+```
+                  frame median   frame p99    frame max   over 50 ms   fix injection max
+  4x              1.9 .. 7.2     17.3 .. 21.1  29.7 .. 45.9     0          0.7 .. 1.3 ms
+  6x              5.9 .. 15.2    24.4 .. 48.4  31.9 .. 139.8   0, 0, 1, 4   1.6 .. 5.1 ms
+```
+
+The single 6x slow frame in a run with a live instrument was attributed: 66.4 ms, the identical
+frame replayed in 15.4 ms, 0.0 ms of collection inside it. That run printed NOTE with that sentence
+beside the number. The four in the other 6x run were reported as FAIL, because that run's GC
+control was the retained burst and was not live.
+
+**What stays open, and why the laptop cannot close it.** The 6x frame-step MEDIAN read 5.9 to 16.2
+ms across all nine runs against a 16.67 ms budget. It always carries a verdict, because a median
+has no spike to attribute. But one replay reading says the laptop cannot settle it in either
+direction: in a single run, two executions of the identical drive gave 6x medians of 1.7 and 10.6
+ms. Gate 9 measures frame time on a real phone, and that is where this is answered.
+

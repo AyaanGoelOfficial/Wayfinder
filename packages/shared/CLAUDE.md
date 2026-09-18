@@ -34,5 +34,33 @@ assume it exists.
   stops and where the user asked to go, and it must never be folded into `distanceM`, `durationS` or
   `instructions`: a driver cannot drive it and an ETA including it is wrong. It is a straight line
   because we have no pedestrian routing, and drawing anything path-shaped would imply one.
+- **`tracking.ts` IS THE TRACKING ENGINE, AND IT LIVES HERE RATHER THAN IN `engine/` FOR A
+  BOUNDARY REASON, not a filing one.** The client runs it, and `packages/CLAUDE.md` lets the client
+  import `config/` and `shared/` and nothing else. On-route matching needs no graph, only the route
+  polyline the client already holds, so it costs no round trip and works with no network.
+  Free-drive matching DOES need the spatial index over 532,951 edges, so that half is a server
+  endpoint in `engine/mapmatch.ts` behind `/match`. Do not move either half across that line.
+- **NO BROWSER ANYTHING IN `tracking.ts`.** No timers, no `Date.now()`, no rAF, no DOM. Time enters
+  as fix timestamps and as an explicit `nowMs` argument. That single decision is what makes the
+  whole engine testable against synthetic traces, and it is also what makes it immune to the timer
+  unreliability measured at gate 0: under 4x CPU throttle a requested 100 ms interval fired at
+  188, 315, 253 and 117 ms.
+- **THE MATCHER GATES ON HEADING AND ONLY RANKS ON DISTANCE, and that ordering is a measurement.**
+  `npm run calibrate:tracking`: 71.9% of one-way road samples in this city have an opposing
+  carriageway inside `SNAP_TRACKING_M`, at 7.91 m separation at p5. No consumer fix separates
+  those by distance, and every confusable pair is opposed by at least 150 degrees. Folding heading
+  into a score as one term among several lets a slightly nearer wrong carriageway outvote it; a
+  gate cannot be outvoted. Reversing this reintroduces precision charter item 3 across most of the
+  network, not in a corner case.
+- **`matchToRoute` RETURNING NULL IS AN ANSWER, not a failure.** It means nothing survived the
+  heading gate, and the caller must hold its previous match rather than claim a road it cannot
+  justify. A stopped vehicle at a divided-road junction is exactly where inventing one puts the
+  dot on the wrong carriageway.
+- **A FIX IS ONLY IMPOSSIBLE IF IT IS IMPOSSIBLE ALLOWING FOR ITS OWN STATED ACCURACY.** The
+  implied-speed filter subtracts both fixes' `accuracyM` before computing speed. Comparing raw
+  positions rejected 581 of 1,121 fixes on an ordinary 8 m noise drive, because at a 96 ms
+  interval a vehicle travelling 1.3 m is displaced about 11 m by noise and reads as 420 km/h.
+  `accuracyM` is a 95% radius per the W3C Geolocation definition, not a sigma; anything producing
+  fixes must report it that way or the filter is right to reject them.
 - **Imports:** `config/` only. Never a package, never Node built-ins, never the DOM. This
   file is bundled into the browser.

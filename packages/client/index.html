@@ -5,6 +5,15 @@
     <!-- No user-scalable=no and no maximum-scale. ui.md: never disable zoom. A driver
          squinting at a route needs to be able to pinch it larger. -->
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- An inline SVG favicon, so the browser's automatic /favicon.ico request is answered
+         instead of 404ing. The browser gate asserts that NO request fails, and a 404 that
+         everyone has learned to ignore is exactly the kind of noise that teaches a team to
+         ignore the next one. Inline rather than a file: no extra request, nothing to lose.
+         A route line on the surface colour, matching --accent and ROUTE_ACCENT. -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23f4f1ec'/%3E%3Cpath d='M7 25 C 13 25, 11 15, 17 15 S 23 7, 26 7' stroke='%231f6feb' stroke-width='4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"
+    />
     <title>Wayfinder GN</title>
   </head>
   <body>

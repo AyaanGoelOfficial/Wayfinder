@@ -16,8 +16,20 @@ import { create } from 'zustand';
 // Relative, because the client has no path alias and `packages/CLAUDE.md` allows exactly two
 // sources here: `config/` and `shared/`. A bare specifier would need an alias whose only job is to
 // make it look like a package, which is how an accidental `engine/` import gets in later.
-import type { ApiError, Approach, Instruction, LngLat, Route, SearchHit, TollDisplay } from '../../shared/index.ts';
+import type {
+  ApiError,
+  Fix,
+  Approach,
+  Instruction,
+  LngLat,
+  Route,
+  SearchHit,
+  TollDisplay,
+  TrackingSnapshot,
+} from '../../shared/index.ts';
 import { tollDisplayOf } from '../../shared/toll.ts';
+import { TrackingController } from './tracking/controller.ts';
+import type { CoarseState } from './tracking/controller.ts';
 
 /** Milliseconds of quiet before a keystroke becomes a request. */
 const DEBOUNCE_MS = 90;
@@ -51,6 +63,40 @@ export interface RouteView {
   readonly destinationApproach: Approach | null;
 }
 
+/**
+ * The tracking slice. COARSE ONLY, on purpose.
+ *
+ * The animated dot and the chase camera are NOT here: they are driven imperatively into MapLibre
+ * from the frame loop in `tracking/controller.ts`. Putting a 60 Hz position in the store would
+ * re-render the entire rail on every frame, and the target device is a mid-range Android under
+ * throttle. What lives here is what a person reads, which changes a few times a minute.
+ */
+export interface TrackingView {
+  readonly active: boolean;
+  readonly source: 'simulator' | 'device' | null;
+  readonly phase: TrackingSnapshot['phase'];
+  readonly quality: TrackingSnapshot['quality'];
+  /** Index into `route.instructions`, or -1 when there is no progress yet. */
+  readonly instructionIndex: number;
+  readonly metresToManeuver: number;
+  readonly remainingM: number;
+  readonly remainingS: number;
+  readonly accuracyM: number;
+  readonly speedMps: number;
+  /** Follow mode. A manual pan drops it and the re-centre control appears. */
+  readonly following: boolean;
+  /** Fix accounting, shown in the dev panel so a filtered stream is never invisible. */
+  readonly accepted: number;
+  readonly rejectedTotal: number;
+  /** How many times the engine has asked for a new route this trip. */
+  readonly reroutes: number;
+  /** Simulator controls. Dev only; absent from a production build's UI. */
+  readonly simSpeedMps: number;
+  readonly simNoiseSigmaM: number;
+  readonly simDropout: number;
+  readonly deviating: boolean;
+}
+
 interface AppState {
   readonly search: SearchState;
   readonly origin: SearchHit | null;
@@ -60,12 +106,21 @@ interface AppState {
   readonly routing: boolean;
   /** Map centre, fed in by the adapter. Used only to bias search ranking. */
   readonly centre: LngLat | null;
+  readonly tracking: TrackingView;
 
   setQuery: (q: string) => void;
   setIndexed: (on: boolean) => void;
   setCentre: (c: LngLat) => void;
   choose: (hit: SearchHit) => void;
   clearRoute: () => void;
+
+  startTracking: (source: 'simulator' | 'device') => void;
+  stopTracking: () => void;
+  setFollowing: (on: boolean) => void;
+  setSimSpeed: (mps: number) => void;
+  setSimNoise: (sigmaM: number) => void;
+  setSimDropout: (p: number) => void;
+  toggleDeviate: () => void;
 }
 
 /**
@@ -86,6 +141,67 @@ async function readError(res: Response): Promise<string> {
   return body?.message ?? `The request failed with status ${res.status}.`;
 }
 
+/**
+ * THE FULL ROUTE, kept beside the view model.
+ *
+ * `RouteView` is shaped for rendering: kilometres, minutes, a display tier. The tracking engine
+ * needs the CONTRACT object, because it matches against `geometry` and derives progress from
+ * `instructions`. Deriving one from the other would mean two representations of the same route
+ * that can disagree, which is the whole failure `shared/` exists to prevent.
+ */
+let rawRoute: Route | null = null;
+
+/**
+ * The per-frame channel, deliberately NOT in the store.
+ *
+ * MapView subscribes to this and writes the dot and the camera straight into MapLibre. A store
+ * write at display rate would re-render the search field and the route panel sixty times a second
+ * to say exactly what they already said.
+ */
+type FrameListener = (s: TrackingSnapshot) => void;
+const frameListeners = new Set<FrameListener>();
+export function onTrackingFrame(fn: FrameListener): () => void {
+  frameListeners.add(fn);
+  return () => frameListeners.delete(fn);
+}
+
+const controller = new TrackingController({
+  onFrame: (s) => {
+    for (const fn of frameListeners) fn(s);
+  },
+  onCoarse: (c: CoarseState) => {
+    useStore.setState((s) => ({
+      tracking: {
+        ...s.tracking,
+        phase: c.phase,
+        quality: c.quality,
+        instructionIndex: c.instructionIndex,
+        metresToManeuver: c.metresToManeuver,
+        remainingM: c.remainingM,
+        remainingS: c.remainingS,
+        accuracyM: c.accuracyM,
+        speedMps: c.speedMps,
+        accepted: c.accepted,
+        rejectedTotal: c.rejectedTotal,
+        deviating: controller.deviating,
+      },
+    }));
+  },
+  /**
+   * The driver has left the route. Ask for a replacement FROM WHERE THEY ACTUALLY ARE.
+   *
+   * Goes through the same `runRoute` as every other request, so it inherits the supersession
+   * machinery unchanged: a monotonic sequence number and an `AbortController`. Charter item 6.
+   * A separate re-route path would be a second place for a stale answer to win.
+   */
+  onReroute: (from) => {
+    const dest = useStore.getState().destination;
+    if (dest === null) return;
+    useStore.setState((s) => ({ tracking: { ...s.tracking, reroutes: s.tracking.reroutes + 1 } }));
+    void runRoute(from, dest.point, useStore.setState);
+  },
+});
+
 export const useStore = create<AppState>()((set, get) => ({
   search: {
     query: '',
@@ -103,8 +219,74 @@ export const useStore = create<AppState>()((set, get) => ({
   routeError: null,
   routing: false,
   centre: null,
+  tracking: {
+    active: false,
+    source: null,
+    phase: 'idle',
+    quality: 'lost',
+    instructionIndex: -1,
+    metresToManeuver: 0,
+    remainingM: 0,
+    remainingS: 0,
+    accuracyM: 0,
+    speedMps: 0,
+    following: true,
+    accepted: 0,
+    rejectedTotal: 0,
+    reroutes: 0,
+    simSpeedMps: 14,
+    simNoiseSigmaM: 8,
+    simDropout: 0,
+    deviating: false,
+  },
 
   setCentre: (c) => set({ centre: c }),
+
+  startTracking: (source) => {
+    const r = get().route;
+    if (source === 'simulator' && r === null) return; // nothing to replay
+    set((s) => ({
+      tracking: { ...s.tracking, active: true, source, following: true, reroutes: 0, deviating: false },
+    }));
+    controller.setRoute(rawRoute);
+    controller.start(source);
+  },
+
+  stopTracking: () => {
+    controller.stop();
+    set((s) => ({
+      tracking: {
+        ...s.tracking,
+        active: false,
+        source: null,
+        phase: 'idle',
+        quality: 'lost',
+        instructionIndex: -1,
+        deviating: false,
+      },
+    }));
+  },
+
+  setFollowing: (on) => set((s) => ({ tracking: { ...s.tracking, following: on } })),
+
+  setSimSpeed: (mps) => {
+    controller.setSimulatorOptions({ speedMps: mps });
+    set((s) => ({ tracking: { ...s.tracking, simSpeedMps: mps } }));
+  },
+  setSimNoise: (sigmaM) => {
+    controller.setSimulatorOptions({ noiseSigmaM: sigmaM });
+    set((s) => ({ tracking: { ...s.tracking, simNoiseSigmaM: sigmaM } }));
+  },
+  setSimDropout: (p) => {
+    controller.setSimulatorOptions({ dropoutProbability: p });
+    set((s) => ({ tracking: { ...s.tracking, simDropout: p } }));
+  },
+  toggleDeviate: () => {
+    const on = !get().tracking.deviating;
+    if (on) controller.deviate();
+    else controller.rejoin();
+    set((s) => ({ tracking: { ...s.tracking, deviating: on } }));
+  },
 
   setIndexed: (on) => {
     set((s) => ({ search: { ...s.search, indexed: on } }));
@@ -139,14 +321,30 @@ export const useStore = create<AppState>()((set, get) => ({
     void runRoute(hit.point, s.destination.point, set);
   },
 
-  clearRoute: () =>
+  clearRoute: () => {
+    // Tracking without a route is free drive, not navigation, and leaving a chase camera locked
+    // to a dot after the route is cleared strands the user pointing at nothing.
+    controller.stop();
+    controller.setRoute(null);
+    rawRoute = null;
     set((s) => ({
       origin: null,
       destination: null,
       route: null,
       routeError: null,
       search: { ...s.search, query: '', hits: [], missed: false },
-    })),
+      tracking: {
+        ...s.tracking,
+        active: false,
+        source: null,
+        phase: 'idle',
+        quality: 'lost',
+        instructionIndex: -1,
+        deviating: false,
+        reroutes: 0,
+      },
+    }));
+  },
 }));
 
 type Setter = (partial: Partial<AppState> | ((s: AppState) => Partial<AppState>)) => void;
@@ -170,6 +368,103 @@ void (async (): Promise<void> => {
     // No corpus figure, no message about the corpus. Nothing else depends on it.
   }
 })();
+
+/**
+ * A route asked for in the URL, as `?from=lon,lat&to=lon,lat`.
+ *
+ * MOVED HERE FROM MapView AT GATE 8, and the move fixed a real defect rather than tidying one.
+ * The map adapter used to fetch and draw this route itself, which meant the app had TWO route
+ * paths: one through the store and one around it. Anything that reads `store.route`, which is now
+ * the route panel, the tracking engine, the simulator and the covered line, saw nothing at all
+ * when the route arrived by link. The link is how every reproducible screenshot and every browser
+ * gate scenario is set up, so the bypassed path was the one under test.
+ *
+ * A synthetic destination is recorded alongside it because RE-ROUTING NEEDS A TARGET. Without it
+ * a driver who deviates on a link-opened route triggers `onReroute` and nothing happens.
+ */
+function pointFromParam(raw: string | null): LngLat | null {
+  if (raw === null) return null;
+  const parts = raw.split(',');
+  const lon = Number(parts[0]);
+  const lat = Number(parts[1]);
+  if (parts.length !== 2 || !Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+  return [lon, lat];
+}
+
+function syntheticHit(name: string, point: LngLat): SearchHit {
+  return {
+    id: -1,
+    name,
+    kind: 'place',
+    category: 'url',
+    point,
+    importance: 0,
+    matchType: 'prefix',
+    score: 0,
+  };
+}
+
+void (function routeFromUrl(): void {
+  const q = new URLSearchParams(window.location.search);
+  const from = pointFromParam(q.get('from'));
+  const to = pointFromParam(q.get('to'));
+  if (from === null || to === null) return;
+  useStore.setState({
+    origin: syntheticHit('Start', from),
+    destination: syntheticHit('Destination', to),
+  });
+  void runRoute(from, to, useStore.setState);
+})();
+
+/**
+ * DEV ONLY test surface, for `npm run verify:browser`.
+ *
+ * The five GPS scenarios must be DETERMINISTIC, and neither fix source can give that. The device
+ * source needs a real receiver; the simulator runs on wall-clock timers, so a scenario driven
+ * through it would assert against whatever the machine happened to schedule, which is precisely
+ * the timer unreliability recorded at gate 0. This hook lets the gate push a scripted trace with
+ * exact timestamps and read the engine's answer back.
+ *
+ * Same pattern and same reason as `window.__map` in the map adapter: a browser gate has to be able
+ * to tell "the engine refused to match" apart from "the dot did not draw", and those two are
+ * indistinguishable from a screenshot. Stripped from production builds by the DEV guard.
+ */
+if (import.meta.env.DEV) {
+  (window as unknown as { __tracking?: unknown }).__tracking = {
+    /**
+     * Begin a scripted run. No fix source is started, so nothing competes with the script.
+     *
+     * `freeDrive` runs it with NO route, which is the only way to exercise the server-side
+     * matcher from a gate: the device source needs a real receiver and headless Chrome denies
+     * geolocation outright.
+     */
+    beginScripted(freeDrive = false): void {
+      controller.beginScripted(freeDrive ? null : rawRoute);
+      useStore.setState((s) => ({
+        tracking: { ...s.tracking, active: true, source: null, following: true, reroutes: 0 },
+      }));
+    },
+    injectFix(fix: Fix): void {
+      controller.injectFix(fix);
+    },
+    /** Advance the animation by an exact elapsed time, with no dependence on rAF scheduling. */
+    step(nowMs: number, dtMs: number): TrackingSnapshot {
+      return controller.stepScripted(nowMs, dtMs);
+    },
+    snapshot(): TrackingSnapshot {
+      return controller.stepScripted(controller.lastScriptedNowMs, 0);
+    },
+    state(): TrackingView {
+      return useStore.getState().tracking;
+    },
+    routeGeometry(): readonly LngLat[] {
+      return rawRoute?.geometry ?? [];
+    },
+    stop(): void {
+      useStore.getState().stopTracking();
+    },
+  };
+}
 
 async function runSearch(q: string, set: Setter, get: () => AppState): Promise<void> {
   const seq = ++searchSeq;
@@ -251,6 +546,10 @@ async function runRoute(from: LngLat, to: LngLat, set: Setter): Promise<void> {
     const body = (await res.json()) as { route: Route };
     if (seq !== routeSeq) return;
     const r = body.route;
+    // The contract object is kept as it arrived, for the tracking engine. Everything below is a
+    // VIEW of it, never a replacement.
+    rawRoute = r;
+    controller.setRoute(r);
     set({
       routing: false,
       routeError: null,

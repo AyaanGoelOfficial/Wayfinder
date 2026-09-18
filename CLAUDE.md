@@ -86,6 +86,9 @@ npm run gate:equality    # every rung vs Dijkstra through EVERY restriction site
 npm run gate:oracle      # places index vs pyosmium. ~6 min, cached on the extract md5s
 npm run gate:oracle -- --full   # ALSO re-derives the clip from raw extracts. 993 s, has passed
 npm run profile:route    # settled/relaxed counts beside wall time, for the gate 5 ladder
+npm run verify:browser   # BUILT AT GATE 8. Five GPS scenarios, hygiene, 320 px, throttled frames.
+                         # Needs BOTH servers already running: `npm run serve` and `npm run dev`.
+                         # Drives headless Chrome over raw CDP, no puppeteer, no new dependency.
 ```
 
 **Measurement, calibration, diagnosis and the audits** are one command per script and the

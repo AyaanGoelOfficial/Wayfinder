@@ -498,12 +498,282 @@ body {
   }
 }
 
+/*
+ * NAVIGATION MODE. Added at gate 8.
+ *
+ * The bar from gate 2 does not move: calm, precise, minimal chrome, one saturated accent. What
+ * changes is WHAT EARNS PIXELS while the vehicle is moving. A driver reads one thing at speed, so
+ * the banner is the only display-sized text on screen and everything else gets quieter.
+ *
+ * The rail COLLAPSES rather than being replaced. One layout with a state attribute, not two
+ * layouts, because two layouts drift and only one of them ever gets checked.
+ */
+.app[data-navigating='yes'] .rail {
+  /* Kept in the tree for the simulator controls, pushed out of the way of the road. */
+  opacity: 0.35;
+  transform: translateX(calc(-1 * var(--space-unit) / 3));
+  transition: opacity 200ms ease, transform 200ms ease;
+}
+
+.app[data-navigating='yes'] .rail:hover,
+.app[data-navigating='yes'] .rail:focus-within {
+  opacity: 1;
+  transform: none;
+}
+
+/*
+ * The maneuver banner. The largest text in the product, and the only display size on screen
+ * during navigation.
+ *
+ * Top centre rather than in the rail: it is read at a glance from the road, and the centre is
+ * where the eye returns. Bounded with min() so it does not span the viewport at 320px.
+ */
+.banner {
+  position: absolute;
+  top: calc(var(--space-unit) / 2);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  display: flex;
+  gap: calc(var(--space-unit) / 2);
+  align-items: center;
+  inline-size: min(28rem, calc(100vw - var(--space-unit)));
+  padding: calc(var(--space-unit) / 2) calc(var(--space-unit) * 0.6);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  /* Light from top-left, same as the status chip. */
+  box-shadow: 0 2px 8px rgb(61 55 46 / 12%);
+}
+
+.banner-glyph {
+  font-size: 2rem;
+  line-height: 1;
+  color: var(--accent);
+  flex: none;
+}
+
+.banner-body {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+}
+
+.banner-distance {
+  font-size: var(--text-display);
+  font-weight: var(--weight-label);
+  line-height: 1.2;
+}
+
+.banner-text {
+  font-size: var(--text-body);
+  color: var(--ink-quiet);
+  /* A long unnamed road must not push the banner wider than its bound. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.banner[data-phase='rerouting'] .banner-glyph {
+  /* The one piece of decorative motion in navigation mode, and it is functional: it says work is
+     happening. Collapsed by the reduced-motion block below, which leaves the glyph in place. */
+  animation: banner-spin 1.4s linear infinite;
+}
+
+@keyframes banner-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/*
+ * The trip strip. Read at rest, not at speed, so it is body sized and sits out of the way.
+ */
+.trip {
+  position: absolute;
+  bottom: calc(var(--space-unit) / 2);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  display: flex;
+  gap: calc(var(--space-unit) / 2);
+  align-items: baseline;
+  max-inline-size: calc(100vw - var(--space-unit));
+  padding: calc(var(--space-unit) / 3) calc(var(--space-unit) / 2);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  box-shadow: 0 2px 8px rgb(61 55 46 / 12%);
+}
+
+.trip-eta {
+  font-size: var(--text-display);
+  font-weight: var(--weight-label);
+}
+
+.trip-rest {
+  font-size: var(--text-caption);
+  color: var(--ink-quiet);
+}
+
+.trip-recentre,
+.trip-stop {
+  font: inherit;
+  font-size: var(--text-caption);
+  font-weight: var(--weight-label);
+  padding: calc(var(--space-unit) / 6) calc(var(--space-unit) / 3);
+  border-radius: calc(var(--radius) / 2);
+  cursor: pointer;
+  /* 44px minimum touch target, measured, not eyeballed. */
+  min-block-size: 2.75rem;
+  min-inline-size: 2.75rem;
+}
+
+.trip-recentre {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--surface);
+}
+
+.trip-stop {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  color: var(--ink-quiet);
+}
+
+/*
+ * Degraded states. Charter item 10: every one names a remedy, and none of them is a spinner.
+ */
+.notice {
+  position: absolute;
+  top: calc(var(--space-unit) * 3.5);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  inline-size: min(28rem, calc(100vw - var(--space-unit)));
+  padding: calc(var(--space-unit) / 3) calc(var(--space-unit) / 2);
+  font-size: var(--text-caption);
+  color: var(--ink-quiet);
+  background: var(--surface-sunk);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+}
+
+.notice strong {
+  font-size: var(--text-body);
+  font-weight: var(--weight-label);
+  color: var(--ink);
+}
+
+/* Denied is the only one that is actionable in settings, so it is the only one that is loud. */
+.notice[data-quality='denied'] {
+  border-color: var(--accent);
+}
+
+/*
+ * The simulator. Dev only, and it looks it: sunk surface, caption type, no accent except on the
+ * one primary action. It is an instrument, and it must never be mistaken for product chrome.
+ */
+.sim {
+  padding: calc(var(--space-unit) / 2);
+  background: var(--surface-sunk);
+  border: 1px dashed var(--hairline);
+  border-radius: var(--radius);
+}
+
+.sim-row {
+  display: flex;
+  gap: calc(var(--space-unit) / 3);
+  flex-wrap: wrap;
+  margin-block-end: calc(var(--space-unit) / 3);
+}
+
+.sim-secondary {
+  font: inherit;
+  font-size: var(--text-caption);
+  padding: calc(var(--space-unit) / 6) calc(var(--space-unit) / 3);
+  min-block-size: 2.75rem;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: calc(var(--radius) / 2);
+  color: var(--ink-quiet);
+  cursor: pointer;
+}
+
+.sim-secondary[data-on='yes'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.sim-field {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) / 6);
+  font-size: var(--text-caption);
+  color: var(--ink-quiet);
+  margin-block-end: calc(var(--space-unit) / 3);
+}
+
+.sim-field input[type='range'] {
+  inline-size: 100%;
+  accent-color: var(--accent);
+}
+
+.sim-stats {
+  margin: 0;
+  font-size: var(--text-caption);
+  color: var(--ink-quiet);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 30rem) {
+  /* At 320 the banner and the strip own the safe middle; the rail is already bounded above. */
+  .banner,
+  .notice,
+  .trip {
+    inline-size: calc(100vw - var(--space-unit));
+  }
+
+  /*
+   * AT THIS WIDTH THE RECEDED RAIL IS HIDDEN, NOT DIMMED, and the difference is not cosmetic.
+   *
+   * On a wide screen the rail is a bounded left column, so dropping it to 0.35 puts it politely
+   * out of the way. At 320 the rail IS the screen: the same 0.35 smears a ten step instruction
+   * list across the whole map, and the verification screenshot showed road names and step
+   * distances competing with the route line for every pixel.
+   *
+   * It stays REACHABLE, which is the reason this is `display: none` on a navigating app rather
+   * than on the rail unconditionally: Stop in the trip strip ends navigation and the rail comes
+   * straight back. A driver on a phone wants the road, not a list they already agreed to.
+   */
+  .app[data-navigating='yes'] .rail {
+    display: none;
+  }
+
+  .trip {
+    /* Clear of MapLibre's attribution box, the same 3rem clearance the status chip uses. */
+    bottom: 3rem;
+    flex-wrap: wrap;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  /* Collapse durations, never delete the final state. */
+  /*
+   * Collapse durations, never delete the final state.
+   *
+   * The rerouting spinner is the one animation in navigation mode. It is FUNCTIONAL, it says work
+   * is happening, so it is stopped rather than removed: the glyph stays on screen at rest, which
+   * still distinguishes the rerouting banner from an ordinary maneuver.
+   */
   *,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+
+  .banner[data-phase='rerouting'] .banner-glyph {
+    animation: none;
   }
 }

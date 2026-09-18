@@ -58,7 +58,7 @@ export default defineConfig(async () => {
       // "Unimplemented type: 4" from parsing "<!doctype html>" as protobuf, then fell back to
       // local font rendering, which looks almost right and is not our glyphs at all.
       proxy: Object.fromEntries(
-        ['/tiles', '/fonts', '/style.json', '/health', '/route', '/snap', '/search'].map((p) => [
+        ['/tiles', '/fonts', '/style.json', '/health', '/route', '/snap', '/search', '/match'].map((p) => [
           p,
           { target: API_TARGET, changeOrigin: false },
         ]),

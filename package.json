@@ -16,6 +16,7 @@
     "calibrate:epe": "tsx scripts/calibrate-epe.ts",
     "calibrate:quality": "tsx scripts/calibrate-quality.ts",
     "calibrate:speeds": "tsx scripts/calibrate-speeds.ts",
+    "calibrate:tracking": "tsx scripts/calibrate-tracking.ts",
     "derive:bbox": "tsx scripts/derive-bbox.ts",
     "dev": "npm --prefix packages/client run dev",
     "diagnose:boundary": "tsx scripts/diagnose-boundary.ts",

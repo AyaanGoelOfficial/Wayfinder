@@ -114,26 +114,6 @@ export const PROFILES = ['driving', 'walking'] as const;
 export type Profile = (typeof PROFILES)[number];
 export const DEFAULT_PROFILE: Profile = 'driving';
 
-/** Live-tracking thresholds. See DESIGN.md for how each was chosen. */
-export const TRACKING = {
-  /** Reject a fix reporting accuracy worse than this, in metres. */
-  maxAccuracyM: 50,
-  /** Reject a fix implying travel faster than this between fixes, in km/h. */
-  maxImpliedSpeedKmh: 150,
-  /** Matched position must be off-corridor by more than this to count as off-route. */
-  offRouteM: 30,
-  /** Sustained off-route duration before a re-route fires, in ms. */
-  offRouteMs: 3000,
-  /** ETA recompute interval. Charter item 5: numbers must not thrash. */
-  etaMinIntervalMs: 1000,
-  /**
-   * Nominal fix cadence, for UI copy only. NEVER used as a timing assumption.
-   * Measured under 4x CPU throttle, a requested 100 ms interval fired at
-   * 188 / 315 / 253 / 117 ms. All dead reckoning uses fix timestamp deltas.
-   */
-  nominalFixHz: 1,
-} as const;
-
 /**
  * TWO SNAP RADII. They are not interchangeable, and crossing them is a bug, not a tuning
  * choice. Each is named after the code path it belongs to so a misuse is visible at the
@@ -164,6 +144,197 @@ export const SNAP_TRACKING_M = 40;
  * nearest-anything match.
  */
 export const SNAP_DESTINATION_M = 500;
+
+/**
+ * LIVE TRACKING. Every number here is derived from a measurement, and the measurement is
+ * `npm run calibrate:tracking`, which reports it against the real clip.
+ *
+ * THE ONE MEASUREMENT THE WHOLE PIPELINE RESTS ON. How close do the two carriageways of a
+ * divided road get in this city? Measured over 66,359 antiparallel one-way pairs on distinct
+ * ways, with roundabout edges excluded from both sides as a control, because a roundabout is a
+ * one-way circle whose own far side is antiparallel and close and would fake the signal:
+ *
+ *     min 1.75    p1 5.88    p5 7.91    p25 12.31    p50 19.39    p90 60.19   metres
+ *
+ * The control barely moved it (p5 8.01 -> 7.91, p50 20.65 -> 19.39), so these are real divided
+ * carriageways rather than circles.
+ *
+ * THE CONSEQUENCE IS THE DESIGN. To stay on one side by distance alone the corridor would have
+ * to be under 4 m at p5. No consumer GPS fix is that good, so DISTANCE CANNOT DISAMBIGUATE
+ * CARRIAGEWAYS HERE, and a nearest-edge matcher fails precision charter item 3 across most of
+ * the network rather than in a corner case:
+ *
+ *     one-way samples with an opposing carriageway inside SNAP_TRACKING_M:  52,148, 71.9%
+ *     bearing gap of those confusable pairs:  min 150.0, p5 156.7, p50 178.8, max 180.0 deg
+ *
+ * Nearly three quarters of the one-way network is confusable by distance, and every confusable
+ * pair is opposed by at least 150 degrees. So HEADING IS THE PRIMARY GATE AND DISTANCE ONLY
+ * RANKS WITHIN THE SURVIVORS. That is the opposite of the obvious matcher, and the numbers
+ * above are why.
+ */
+export const TRACKING = {
+  /**
+   * Reject a fix reporting accuracy worse than this, in metres.
+   *
+   * TIED TO `SNAP_TRACKING_M`, not chosen next to it. Accuracy is the radius the receiver
+   * believes the true position lies within. If that radius exceeds the radius we are willing to
+   * search, the true position can be outside every edge we would consider, and any match we
+   * return is asserting more than the fix supports.
+   *
+   * This TIGHTENED from the gate 0 target of 50, which was incoherent: it accepted fixes whose
+   * own uncertainty was larger than the entire search radius. Tightening a rejection threshold
+   * is not the banned move; `hard-rules.md` forbids WIDENING a snap radius to pass a test, and
+   * `SNAP_TRACKING_M` itself is untouched at 40.
+   */
+  maxAccuracyM: SNAP_TRACKING_M,
+  /**
+   * Reject a fix implying travel faster than this between fixes, in km/h.
+   *
+   * The fastest modelled edge in the graph is 120 km/h (587 edges, the expressways). 150 allows
+   * 25% over that, which covers both genuine speeding and the error in our own speed estimates,
+   * while still rejecting the multi-kilometre jumps a lost-lock fix produces. Measured by
+   * `npm run calibrate:tracking`.
+   */
+  maxImpliedSpeedKmh: 150,
+  /**
+   * Maximum bearing disagreement, in degrees, before a candidate edge is refused outright.
+   *
+   * DERIVED FROM THE CONFUSABLE PAIRS, above. The closest any confusable opposing carriageway
+   * comes to agreeing with its neighbour is 150 degrees. A gate at 60 rejects every one of them
+   * with 90 degrees of margin, while still tolerating GPS heading noise and the curvature inside
+   * a single shape segment. Anything above 75 would start admitting the tightest measured pair.
+   */
+  headingAgreementDeg: 60,
+  /**
+   * Below this speed, in m/s, a fix contributes NO heading and the matcher holds its previous
+   * edge instead of re-deciding.
+   *
+   * A stopped vehicle does not change carriageway, and both heading sources fail at rest: the
+   * receiver's Doppler heading is noise below roughly walking pace, and a bearing derived from
+   * consecutive fixes is meaningless when the travel between them is smaller than their own
+   * error. 2.0 m/s is 7.2 km/h.
+   */
+  headingMinSpeedMps: 2.0,
+  /**
+   * Along-track displacement, in metres, that must accumulate before a bearing DERIVED from
+   * consecutive fixes is trusted. Used when the receiver reports no heading of its own.
+   *
+   * At the 8 m position noise the simulator injects, two independent fixes carry a combined
+   * cross-track error of 8 * sqrt(2) = 11.3 m, so a bearing over a baseline of d has an error of
+   * about atan(11.3 / d). At d = 25 that is 24.3 degrees, comfortably inside half the 60 degree
+   * gate above. A shorter baseline would let position noise masquerade as a turn.
+   */
+  headingWindowM: 25,
+  /**
+   * Matched position must be off-corridor by more than this, in metres, to count as off-route.
+   *
+   * Bounded on both sides rather than picked. It must exceed the median carriageway separation
+   * of 19.39 m, or a driver on the correct side of a divided road reads as a departure from
+   * lateral error alone. It must stay under `SNAP_TRACKING_M` = 40, or the fix stops matching
+   * before it is ever judged off-route and the hysteresis window below never gets to observe
+   * anything. 30 sits between the two.
+   */
+  offRouteM: 30,
+  /**
+   * Sustained off-route duration before a re-route fires, in ms.
+   *
+   * At the nominal 1 Hz this is three consecutive fixes, and the filter has already rejected the
+   * junk, so three in a row is a real departure rather than a bad sample. It is also short
+   * enough to be useful: at 60 km/h three seconds is 50 m of travel, well inside the p99 gap
+   * between shape points (217.59 m), so the new route arrives before the driver has committed to
+   * a second wrong turn.
+   */
+  offRouteMs: 3000,
+  /**
+   * Emission sigma floor, in metres, for the free-drive matcher.
+   *
+   * The matcher uses the receiver's own reported accuracy as its emission sigma, because that is
+   * the receiver's own statement of its uncertainty. The floor stops a fix claiming implausible
+   * precision from collapsing the distribution onto one candidate: 4 m is half the p5 carriageway
+   * separation, the point below which extra positional confidence buys no extra discrimination.
+   */
+  emissionSigmaFloorM: 4,
+  /**
+   * How far the on-road distance between two consecutive matched candidates may exceed the
+   * straight-line distance, in metres, before the transition is treated as implausible.
+   *
+   * A vehicle cannot travel a shorter road distance than the great-circle distance, and a route
+   * between two genuinely consecutive positions rarely exceeds it by much. Set at the median
+   * carriageway separation, 20 m: the classic false transition is a hop to the opposite
+   * carriageway, which costs a U-turn on the road network and blows straight past this.
+   */
+  transitionToleranceM: 20,
+  /** Candidate edges considered per fix in free drive. Beyond this the tail never wins. */
+  maxCandidates: 8,
+  /**
+   * ETA recompute interval, in ms. Charter item 5: numbers must not thrash.
+   */
+  etaMinIntervalMs: 1000,
+  /**
+   * Hysteresis on the displayed ETA, in seconds. A recomputed ETA within this of the displayed
+   * one does not move the display.
+   *
+   * 30 s is the resolution a driver can actually act on. Below it the number is churning inside
+   * its own error: the speed estimates it rests on are class defaults for 98.5% of ways, so an
+   * ETA quoted to finer than half a minute is asserting precision the model does not have.
+   */
+  etaHysteresisS: 30,
+  /**
+   * Largest distance, in metres, the DISPLAYED dot may move in a single animation frame.
+   * Charter item 4, and the assertion the simulator tests bound.
+   *
+   * At 60 fps this permits 120 m/s of catch-up, far above the 33.3 m/s of the fastest modelled
+   * edge, so a correction is absorbed within a few frames rather than lingering. At zoom 17 in
+   * this city one metre is 1.05 px, so 2 m is under 2 px per frame, which reads as motion rather
+   * than as a jump.
+   */
+  maxDisplayStepM: 2,
+  /**
+   * Time constant, in ms, for easing the displayed position toward the matched position.
+   *
+   * A correction is 63% absorbed in one tau and 95% in three. At 400 ms that is 1.2 s to settle,
+   * just inside the nominal 1 Hz fix interval, so the dot finishes reacting to one fix before the
+   * next arrives instead of accumulating a backlog of corrections.
+   */
+  smoothingTauMs: 400,
+  /**
+   * Nominal fix cadence, for UI copy only. NEVER used as a timing assumption.
+   * Measured under 4x CPU throttle, a requested 100 ms interval fired at
+   * 188 / 315 / 253 / 117 ms. All dead reckoning uses fix timestamp deltas.
+   */
+  nominalFixHz: 1,
+} as const;
+
+/**
+ * CHASE CAMERA. Framing numbers, kept beside the tracking thresholds because they are read by
+ * the same loop and change together.
+ *
+ * Pitch and zoom are presentation, so they are argued rather than measured, but the ARGUMENT is
+ * recorded so a later change has something to disagree with.
+ */
+export const CAMERA = {
+  /** Degrees of tilt in follow mode. Enough to show the road ahead without losing the junction. */
+  pitchDeg: 45,
+  /**
+   * Zoom by speed. Slower means closer, because at low speed the next decision is near and the
+   * detail matters; at expressway speed the next decision is far and the context matters.
+   * Interpolated between the two anchors, clamped outside them.
+   */
+  zoomAtRestSpeedMps: 0,
+  zoomAtRest: 17.5,
+  zoomAtCruiseSpeedMps: 25,
+  zoomAtCruise: 15.5,
+  /**
+   * Time constant, in ms, for easing camera bearing and centre. Longer than the dot's, on
+   * purpose: a camera that tracks heading as fast as the dot swings on every GPS wobble.
+   */
+  easeTauMs: 700,
+  /**
+   * A manual pan of more than this many pixels drops follow mode and shows the re-centre control.
+   * Below it the gesture is treated as an accidental brush rather than an intent to look away.
+   */
+  breakFollowPx: 24,
+} as const;
 
 /**
  * ROUTING PERFORMANCE BUDGETS. Two of them, because there are two different requirements and

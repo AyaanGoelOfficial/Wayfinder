@@ -11,6 +11,8 @@ npm run diagnose:route   # WHY a pair diverges, grouped by cause -> DIVERGENCE.m
 npm run calibrate:speeds # tagged maxspeed per class vs our defaults. Read the sample counts
 npm run calibrate:quality # surface/smoothness/lanes coverage per class. Controls printed first
 npm run calibrate:epe    # fits EPE chainage to the Gazette plazas. REFUSES on a drifting residual
+npm run calibrate:tracking # divided carriageway separation across the clip. Derives every TRACKING
+                         # threshold, and emits the gate 8 wrong-side fixture sites
 npm run diagnose:flattening # class ratio, slow-road share, and the straight-line-excess proof
 npm run experiment:speeds # A/B a speed table over the same 56 pairs. No rebuild needed
 npm run experiment:turns  # A/B the turn cost model. Reports SHAPE overlap, not just the delta
@@ -19,7 +21,7 @@ npm run audit:tolls      # every tolled way by name/ref with km. Read-only
 npm run audit:epe        # EPE booths, junctions, and which pairs use the road. Read-only
 npm run report:tolls     # what the toll model charges, per road and per pair, with the cost A/B
 npm run bench            # p50/p95/p99 for route, snap, search -> BENCHMARKS.md
-npm run verify:browser   # NOT BUILT until gate 8. Console, visual, network, GPS, throttled
+npm run verify:browser   # BUILT at gate 8. Five GPS scenarios, hygiene, 320 px, throttled frames
 npm run acceptance       # NOT BUILT until gate 9. One pass/fail table, every charter item
 ```
 
@@ -65,6 +67,23 @@ filesystem, and `tools/`. Nothing in `packages/` may import from here.
   node ids and coordinates, the bounding box of the untagged stretch, what meets each end, and the
   toll booths near it. Built because gate 6 closed with that boundary as an open question and a
   latitude is not somewhere a person can stand.
+- **`npm run calibrate:tracking` ANSWERS ONE QUESTION, and every tracking threshold follows from
+  it:** how close do the two carriageways of a divided road get in this city? Measured over 66,359
+  antiparallel one-way pairs on distinct ways, with roundabout edges excluded from both sides as a
+  control, because a roundabout is a one-way circle whose own far side is antiparallel and close
+  and would fake the signal. Answer: 7.91 m at p5, 19.39 m at the median. Half the p5 is under 4 m,
+  tighter than any consumer GPS fix, so DISTANCE CANNOT PICK THE CARRIAGEWAY and heading has to
+  gate the candidates rather than break ties. It also reports the exposure, 71.9% of one-way
+  samples have an opposing carriageway inside `SNAP_TRACKING_M`, and emits candidate SITES that
+  `config/fixtures/tracking.ts` freezes so the gate 8 fixture is derived rather than eyeballed.
+- **`npm run verify:browser` NEEDS BOTH SERVERS ALREADY RUNNING** and says so rather than hanging.
+  It speaks raw CDP over Node's built-in WebSocket, so there is no puppeteer here and nothing to
+  vendor. It launches its own headless Chrome on port 9333 with a throwaway profile.
+- **A GC POSITIVE CONTROL MUST ALLOCATE SHORT-LIVED OBJECTS, never a retained burst.** The first
+  control retained 400,000 objects and at 6x produced no collection at all: V8 saw them survive,
+  pretenured the allocation site into old space, and never scavenged, so a working GC instrument
+  read as dead. Objects written through a small ring escape (cannot be optimised away) and die
+  young (cannot be pretenured).
 - **`npm run calibrate:epe`** fits the EPE chainage anchor and REFUSES on a drifting residual. It is
   the only thing that may set `EPE_CHAINAGE_AT_CLIP_SOUTH_END_KM`.
   over a 546 MB input, and a number that stops moving is the only usable failure signal.

@@ -18,14 +18,15 @@ import { createReadStream } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { ROUTES } from '../shared/index.ts';
-import type { ApiError, Approach, LngLat, Place, RouteResponse, SearchResponse } from '../shared/index.ts';
+import type { ApiError, Approach, Fix, LngLat, MatchRequest, MatchResponse, Place, RouteResponse, SearchResponse } from '../shared/index.ts';
 import { haversineM } from '../shared/geo.ts';
 import { SnapIndex } from '../engine/snap.ts';
 import { Router } from '../engine/dijkstra.ts';
 import { parseGraphArtifact } from '../engine/graphfile.ts';
 import { buildInstructions } from '../engine/instructions.ts';
+import { matchFreeDrive } from '../engine/mapmatch.ts';
 import { PlacesSearch } from '../engine/search.ts';
-import { APPROACH_MIN_M, BUILD_AREA, OBJECTIVE, SNAP_DESTINATION_M, TURN_COST } from '../../config/city.ts';
+import { APPROACH_MIN_M, BUILD_AREA, OBJECTIVE, SNAP_DESTINATION_M, SNAP_TRACKING_M, TURN_COST } from '../../config/city.ts';
 
 const DATA = resolve(import.meta.dirname, '../../data');
 const PMTILES = resolve(DATA, 'wayfinder-gn.pmtiles');
@@ -41,6 +42,8 @@ const STYLE_JSON = resolve(DATA, 'style.json');
  * every client parameter as untrusted, and a number is untrusted in exactly this way.
  */
 const SEARCH_LIMIT_MAX = 25;
+/** Newest fixes considered by /match. The HMM only needs enough history to judge a transition. */
+const MATCH_WINDOW_FIXES = 12;
 const PORT = Number(process.env['PORT'] ?? 8080);
 const HOST = process.env['HOST'] ?? '0.0.0.0';
 
@@ -442,10 +445,90 @@ try {
   console.error('Run `npm run build-city` first. The server will start but every tile will 503.');
 }
 
+/**
+ * Free-drive map matching. Which road is the vehicle on, with no active route?
+ *
+ * A POST, and the only one in this file, because the body is a WINDOW of fixes rather than a
+ * point. The HMM needs consecutive observations to judge a transition, and a query string full of
+ * serialised fixes would be a worse version of the same thing.
+ *
+ * THE CLIENT IS UNTRUSTED INPUT, so every field of every fix is validated before the engine is
+ * touched, exactly as `parsePoint` does for /route. A fix array is a larger attack surface than a
+ * pair of coordinates, so the window is capped as well as validated.
+ */
+app.post<{ Body: MatchRequest }>(ROUTES.match, async (req, reply) => {
+  const t0 = performance.now();
+  const body = req.body as MatchRequest | undefined;
+  const raw = body?.fixes;
+  if (!Array.isArray(raw) || raw.length === 0) {
+    const err: ApiError = {
+      code: 'INVALID_PARAMETER',
+      message: 'Send at least one position fix to match, as a fixes array.',
+    };
+    return reply.code(400).send(err);
+  }
+
+  // Only the newest fixes matter, and an unbounded array is an unbounded amount of work.
+  const window = raw.slice(-MATCH_WINDOW_FIXES);
+  const fixes: Fix[] = [];
+  for (const f of window) {
+    const p = f?.point;
+    if (!Array.isArray(p) || p.length !== 2) {
+      const err: ApiError = {
+        code: 'INVALID_PARAMETER',
+        message: 'Every fix needs a point, as lon,lat.',
+      };
+      return reply.code(400).send(err);
+    }
+    const lon = Number(p[0]);
+    const lat = Number(p[1]);
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
+      const err: ApiError = {
+        code: 'INVALID_PARAMETER',
+        message: 'Every fix point must be two numbers, lon,lat.',
+      };
+      return reply.code(400).send(err);
+    }
+    if (lat < BUILD_AREA.minLat || lat > BUILD_AREA.maxLat || lon < BUILD_AREA.minLon || lon > BUILD_AREA.maxLon) {
+      const err: ApiError = {
+        code: 'OUTSIDE_BUILD_AREA',
+        message: 'That position is outside the mapped area. Tracking works inside Gautam Buddha Nagar.',
+        detail: { lon, lat },
+      };
+      return reply.code(422).send(err);
+    }
+    const accuracyM = Number(f?.accuracyM);
+    const timestamp = Number(f?.timestamp);
+    const headingRaw = f?.headingDeg;
+    const speedRaw = f?.speedMps;
+    fixes.push({
+      point: [lon, lat],
+      // A missing accuracy is treated as the worst accepted rather than as perfect. Defaulting an
+      // absent uncertainty to zero would let a fix claim more precision than it stated.
+      accuracyM: Number.isFinite(accuracyM) ? accuracyM : SNAP_TRACKING_M,
+      headingDeg: typeof headingRaw === 'number' && Number.isFinite(headingRaw) ? headingRaw : null,
+      speedMps: typeof speedRaw === 'number' && Number.isFinite(speedRaw) ? speedRaw : null,
+      timestamp: Number.isFinite(timestamp) ? timestamp : 0,
+    });
+  }
+
+  const match = matchFreeDrive(artifact.graph, snapIndex, fixes, {
+    nameOf: (id) => (id >= 0 ? artifact.roadNames[id] : undefined),
+  });
+  const response: MatchResponse = {
+    // Null is a real answer: nothing survived the heading gate, so we decline to name a road
+    // rather than assert one. Charter item 10.
+    match,
+    timingMs: { match: Number((performance.now() - t0).toFixed(2)) },
+  };
+  return response;
+});
+
 await app.listen({ port: PORT, host: HOST });
 console.log(`wayfinder-gn server on http://localhost:${PORT}`);
 console.log(`  ${ROUTES.health}   health and artifact status`);
 console.log(`  ${ROUTES.route}    from=lon,lat to=lon,lat`);
 console.log(`  ${ROUTES.search}   q=text, optional near=lon,lat and limit`);
+console.log(`  ${ROUTES.match}    POST, body {fixes}, free-drive map matching`);
 console.log(`  /style.json  MapLibre style`);
 console.log(`  /tiles/wayfinder-gn.pmtiles  archive, byte ranges honoured`);

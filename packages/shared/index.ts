@@ -430,9 +430,151 @@ export interface BuildReport {
   readonly tiles: { readonly bytesOnDisk: number; readonly buildMs: number; readonly peakRssBytes: number };
 }
 
+// ---------------------------------------------------------------------------
+// Live tracking. Precision charter items 3, 4, 5, 6 and 10.
+// ---------------------------------------------------------------------------
+
+/**
+ * One position report, narrowed to the fields we actually use.
+ *
+ * `timestamp` IS THE CLOCK. Never `Date.now()`, never an assumed cadence. Measured under 4x CPU
+ * throttle, a requested 100 ms interval fired at 188, 315, 253 and 117 ms, so anything that
+ * dead-reckons from a nominal 1 Hz is correct on a laptop and wrong on the target phone.
+ */
+export interface Fix {
+  readonly point: LngLat;
+  /** The receiver's own 68% confidence radius, in metres. Displayed honestly, never hidden. */
+  readonly accuracyM: number;
+  /** Degrees clockwise from true north, or null when the receiver reports none. */
+  readonly headingDeg: number | null;
+  /** Metres per second, or null when the receiver reports none. */
+  readonly speedMps: number | null;
+  /** Epoch milliseconds, from the fix itself. */
+  readonly timestamp: number;
+}
+
+/**
+ * Why a fix was refused. Counted and surfaced rather than swallowed: a silently discarded fix
+ * stream and a stationary vehicle look identical on screen, which is charter item 10.
+ */
+export type FixRejection =
+  /** `accuracyM` worse than `TRACKING.maxAccuracyM`. */
+  | 'accuracy'
+  /** Travel since the previous accepted fix implies more than `TRACKING.maxImpliedSpeedKmh`. */
+  | 'implied-speed'
+  /** Timestamp at or before the previous accepted fix. Receivers do replay old samples. */
+  | 'out-of-order';
+
+/** Where the matcher believes the vehicle is, ON THE ROAD, never the raw fix. */
+export interface MatchedPosition {
+  /** The projected point on the road or route, never the input point. */
+  readonly point: LngLat;
+  /** Bearing of the road at the matched point, degrees from true north. */
+  readonly bearingDeg: number;
+  /** Metres from the raw fix to this point. The lateral error, reported rather than hidden. */
+  readonly offsetM: number;
+  /** Metres travelled along the active route. Measured from edge offsets, not accumulated. */
+  readonly routeDistanceM: number;
+  /** Index of the route geometry vertex at or before the match. */
+  readonly geometryIndex: number;
+}
+
+/** What the navigator is doing. Drives which chrome renders and which copy applies. */
+export type TrackingPhase =
+  /** Not tracking. */
+  | 'idle'
+  /** Tracking asked for, no fix accepted yet. */
+  | 'acquiring'
+  /** Following an active route. */
+  | 'navigating'
+  /** Off the route beyond the threshold; a replacement has been requested. */
+  | 'rerouting'
+  /** Tracking with no active route. Matching runs server side over the spatial index. */
+  | 'free-drive'
+  /** Within arrival distance of the destination. */
+  | 'arrived';
+
+/**
+ * How much the fix stream can be believed right now. Charter item 10: the UI must degrade
+ * honestly rather than keep drawing a confident dot on stale data.
+ */
+export type GpsQuality =
+  /** Fixes arriving and being accepted. */
+  | 'good'
+  /** Fixes arriving but accuracy is at the edge, or some are being rejected. */
+  | 'poor'
+  /** Nothing accepted for longer than the dropout window. */
+  | 'lost'
+  /** The browser refused the permission. A remedy, not a spinner. */
+  | 'denied';
+
+/** Progress along the active route. Every field derived from `routeDistanceM`, never per frame. */
+export interface TrackingProgress {
+  readonly remainingM: number;
+  /** Seconds remaining, from the per-edge speed model over the remaining instructions. */
+  readonly remainingS: number;
+  /** Which instruction is current. Index into `Route.instructions`. */
+  readonly instructionIndex: number;
+  /** Metres from the matched position to the current instruction's maneuver point. */
+  readonly metresToManeuver: number;
+  /** Route geometry up to this index is behind the vehicle and renders as covered. */
+  readonly coveredIndex: number;
+}
+
+/** Everything a view needs to render one animation frame. The engine's whole output. */
+export interface TrackingSnapshot {
+  readonly phase: TrackingPhase;
+  readonly quality: GpsQuality;
+  /** The ANIMATED position. Interpolated and eased, never the raw fix. Charter item 4. */
+  readonly display: LngLat | null;
+  /** Bearing the dot and the chase camera point along, eased. */
+  readonly displayBearingDeg: number;
+  /** Metres per second, smoothed. Drives the speed-based camera zoom. */
+  readonly speedMps: number;
+  /** Last accepted accuracy, in metres. Rendered as the accuracy circle, at true size. */
+  readonly accuracyM: number;
+  readonly matched: MatchedPosition | null;
+  readonly progress: TrackingProgress | null;
+  /** How long the vehicle has been continuously off-corridor, in ms. Drives the re-route. */
+  readonly offRouteMs: number;
+  /** Accepted and rejected counts, by reason. Surfaced in the dev panel and the browser gate. */
+  readonly accepted: number;
+  readonly rejected: Readonly<Record<FixRejection, number>>;
+}
+
+/**
+ * FREE-DRIVE MATCHING, server side.
+ *
+ * Runs here rather than in the client because it needs the spatial index over 532,951 directed
+ * edges, and `packages/CLAUDE.md` forbids the client importing `engine/` for exactly that reason.
+ * On-route matching needs no graph, so it stays in the client where it costs no round trip.
+ */
+export interface MatchRequest {
+  /** Most recent fixes, oldest first. The HMM needs a short history to judge transitions. */
+  readonly fixes: readonly Fix[];
+}
+
+export interface MatchResult {
+  readonly point: LngLat;
+  readonly edgeId: number;
+  readonly bearingDeg: number;
+  readonly offsetM: number;
+  /** Posterior probability of the winning candidate, 0..1. Below 0.5 the UI says so. */
+  readonly probability: number;
+  /** Name of the matched road, when it has one. */
+  readonly roadName?: string | undefined;
+}
+
+export interface MatchResponse {
+  /** Null when no candidate survived the heading gate. Not an error: it means "do not claim". */
+  readonly match: MatchResult | null;
+  readonly timingMs: Timing;
+}
+
 export const ROUTES = {
   route: '/route',
   snap: '/snap',
   search: '/search',
+  match: '/match',
   health: '/health',
 } as const;

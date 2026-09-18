@@ -95,6 +95,18 @@ reason, in the same message.
   interleaved per query under identical conditions. **Cross-run absolute comparison is not**, and
   multiplying a within-run ratio by another run's absolute number produces a figure that looks
   like a measurement and is not. Label any such figure an estimate, in the same sentence.
+- **NEVER withhold a verdict (a NOTE) without a POSITIVE ATTRIBUTION ARGUMENT, and NEVER print a
+  NOTE without that argument beside its number.** The argument is specific evidence, produced by
+  the same run, that the cause lies outside the code under test. Run-to-run variance alone is never
+  one; "the machine was busy" is a hypothesis, not evidence. The argument must also DISCRIMINATE:
+  it has to be one the code under test could have failed. Reason: a withheld verdict on a
+  hypothesis is a quiet pass. Real case: the first gate 8 argument for the 6x throttle, "no slow
+  frame landed on a fix-injection frame", discriminated nothing, because the injection sat outside
+  the timed region and fix frames did no more timed work than any other. It was replaced by a
+  REPLAY (the scripted drive run twice with identical inputs; a frame slow once and fast on replay
+  is not slow work) plus a trace ruling out garbage collection inside the frame, with a positive
+  control proving the GC instrument live. A median has no spike to attribute, so it always carries
+  a verdict. Enforced in `verify:browser` by `note()`, the only constructor of a NOTE.
 - **NEVER report a wall time from this machine without "upper bound".** Two of the three CPU
   co-tenants are the operator's own windows and the third is the agent running the benchmark, so
   a genuinely quiet reading is not obtainable from inside a session. `scripts/lib/machine.ts`
